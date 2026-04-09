@@ -40,7 +40,7 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	h, kadDHT, ds, incomingStreamCh, err := vnet.SetupHost(ctx, 0, cfg.Username)
+	h, kadDHT, ds, incomingStreamCh, _, err := vnet.SetupHost(ctx, 0, cfg.Username)
 	if err != nil {
 		log.Fatal("Failed to setup libp2p host:", err)
 	}
@@ -66,6 +66,14 @@ func main() {
 		sendCh := make(chan []byte, 8)
 		recvCh := make(chan []byte, 16)
 		filteredSendCh := make(chan []byte, 8)
+
+		// Pre-allocated Zero-Allocation audio capture free-list!
+		// 32 frames of buffers allows plenty of headroom for the pipeline.
+		freePool := make(chan []byte, 32)
+		for i := 0; i < 32; i++ {
+			freePool <- make([]byte, audio.FrameBytes)
+		}
+
 		var disconnectOnce sync.Once
 		notifyDisconnected := func() {
 			disconnectOnce.Do(func() {
@@ -81,10 +89,10 @@ func main() {
 		})
 
 		rb := audio.NewRingBuffer(1024 * 64)
-		capturer, _ := audio.NewCapturer(mctx, rawCh)
+		capturer, _ := audio.NewCapturer(mctx, rawCh, freePool)
 		player, _ := audio.NewPlayer(mctx, rb)
 
-		go audio.NewPipeline(rawCh, sendCh, rb).Run(ctx)
+		go audio.NewPipeline(rawCh, sendCh, rb, cfg.AECTrimOffsetMs, freePool).Run(ctx)
 		go audio.RecvPipeline(recvCh, rb, audio.NewCodec())
 
 		capturer.Start()

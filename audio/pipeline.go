@@ -2,6 +2,7 @@ package audio
 
 import (
 	"context"
+	"encoding/binary"
 	"log"
 	"time"
 	"unsafe"
@@ -20,9 +21,11 @@ type Pipeline struct {
 	aec      *EchoCanceller
 	denoiser *DenoiseState
 	rb       *RingBuffer
+	aecDelay int
+	freePool chan []byte
 }
 
-func NewPipeline(rawCh <-chan []byte, sendCh chan<- []byte, rb *RingBuffer) *Pipeline {
+func NewPipeline(rawCh <-chan []byte, sendCh chan<- []byte, rb *RingBuffer, aecDelay int, freePool chan []byte) *Pipeline {
 	// 480 frames = 10ms. 12000 tail = 250ms echo memory
 	echoCanceller, err := NewEchoCanceller(FrameSamples, 12000, SampleRate)
 	if err != nil {
@@ -36,6 +39,8 @@ func NewPipeline(rawCh <-chan []byte, sendCh chan<- []byte, rb *RingBuffer) *Pip
 		aec:      echoCanceller,
 		denoiser: NewDenoiseState(),
 		rb:       rb,
+		aecDelay: aecDelay,
+		freePool: freePool,
 	}
 }
 
@@ -48,6 +53,23 @@ func (p *Pipeline) Run(ctx context.Context) {
 	defer logTicker.Stop()
 	var framesCaptured, silentFrames, framesSent uint64
 
+	// --- Hardware Latency Delay Line Setup ---
+	// p.aecDelay is config.AECTrimOffsetMs. Since each frame is 10ms, we need delayFrames.
+	// Ensure delayFrames is at least 1 to avoid popping from empty
+	delayFrames := p.aecDelay / 10
+	if delayFrames < 1 {
+		delayFrames = 1
+	}
+
+	// Create a queue to hold our delayed reference frames
+	refDelayLine := make([][]int16, 0, delayFrames)
+
+	// Pre-fill the delay line with digital silence (zeros)
+	for i := 0; i < delayFrames; i++ {
+		refDelayLine = append(refDelayLine, make([]int16, FrameSamples))
+	}
+	// ----------------------------------------------
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -55,16 +77,46 @@ func (p *Pipeline) Run(ctx context.Context) {
 		case frame := <-p.rawCh:
 			framesCaptured++
 
-			// 2. AEC
-			// Peek at the audio that is currently about to play on the speakers
+			// Get the CURRENT speaker audio and the CURRENT mic audio
 			p.rb.Peek(refBuf)
-
-			// Cast the []byte slices to []int16 for Speex
 			mic16 := unsafe.Slice((*int16)(unsafe.Pointer(&frame[0])), len(frame)/2)
 			ref16 := unsafe.Slice((*int16)(unsafe.Pointer(&refBuf[0])), len(refBuf)/2)
 
-			// Process echo cancellation
-			clean16 := p.aec.Process(mic16, ref16)
+			// --- Delay Line Processing ---
+			// Make a copy of the current reference frame to store in our history
+			currentRefCopy := make([]int16, len(ref16))
+			copy(currentRefCopy, ref16)
+
+			// Push the newest reference audio into the queue
+			refDelayLine = append(refDelayLine, currentRefCopy)
+
+			// Pop the oldest reference audio out of the queue (this is what played `aecDelay` ms ago!)
+			delayedRef16 := refDelayLine[0]
+			refDelayLine = refDelayLine[1:]
+			// ----------------------------------
+
+			// --- VAD-Gated AEC (Double-Talk Bypass) ---
+			// Check if the remote peer actually spoke. If the speaker buffer is basically silence,
+			// there is no echo to cancel, so we bypass AEC to prevent voice corruption!
+			var refEnergy int64
+			for _, sample := range delayedRef16 {
+				if sample < 0 {
+					refEnergy -= int64(sample)
+				} else {
+					refEnergy += int64(sample)
+				}
+			}
+
+			var clean16 []int16
+			// Average amplitude of ~50 (out of 32768) across 480 samples = 24000.
+			if refEnergy > 24000 {
+				// Process echo cancellation with properly delayed reference
+				clean16 = p.aec.Process(mic16, delayedRef16)
+			} else {
+				// Remote peer is silent. Pass through local mic freely!
+				clean16 = make([]int16, len(mic16))
+				copy(clean16, mic16)
+			}
 
 			// Fast silence check and Denoise step wrapped into one
 			if isSilent := p.denoiser.Process(clean16); isSilent {
@@ -75,8 +127,15 @@ func (p *Pipeline) Run(ctx context.Context) {
 			byteLen := len(clean16) * 2
 			cleanBytes := unsafe.Slice((*byte)(unsafe.Pointer(&clean16[0])), byteLen)
 
-			// 3. Compress clean audio
+			// Compress clean audio
 			encodedFrame := p.codec.Encode(cleanBytes)
+
+			// Return the now-processed capture frame to the zero-allocation free list
+			select {
+			case p.freePool <- frame:
+			default:
+			}
+
 			if encodedFrame == nil {
 				continue
 			}
@@ -100,6 +159,12 @@ func RecvPipeline(recvCh <-chan []byte, rb *RingBuffer, codec *Codec) {
 	logTicker := time.NewTicker(time.Second * 2)
 	defer logTicker.Stop()
 	var framesReceived, framesDecoded uint64
+	var maxSeq uint16
+	var hasSeq bool
+
+	// Ticker for network gap detection (every 12ms allows 2ms leeway over a 10ms frame rate)
+	gapTicker := time.NewTicker(time.Millisecond * 12)
+	defer gapTicker.Stop()
 
 	for {
 		select {
@@ -107,10 +172,37 @@ func RecvPipeline(recvCh <-chan []byte, rb *RingBuffer, codec *Codec) {
 			if !ok {
 				return
 			}
+			// Reset gap timer because we just got a real packet!
+			gapTicker.Reset(time.Millisecond * 12)
+
+			if len(frame) < 2 {
+				continue
+			}
+
+			// Sequence tracking
+			seq := binary.LittleEndian.Uint16(frame[0:2])
+			payload := frame[2:]
+
+			if hasSeq {
+				diff := int16(seq - maxSeq)
+				// Allow a small reorder window (±5 sequence numbers).
+				// Anything significantly older (<-5) in a rapid burst is dropped to shed latency.
+				if diff < -5 && diff > -1000 {
+					// Stale packet (arrived too late), drop it to shed latency
+					continue
+				}
+				if diff > 0 {
+					maxSeq = seq
+				}
+			} else {
+				hasSeq = true
+				maxSeq = seq
+			}
+
 			framesReceived++
 
 			// Decompress!
-			decodedFrame := codec.Decode(frame)
+			decodedFrame := codec.Decode(payload)
 			if decodedFrame == nil {
 				continue
 			}
@@ -121,6 +213,18 @@ func RecvPipeline(recvCh <-chan []byte, rb *RingBuffer, codec *Codec) {
 			}
 
 			rb.Write(decodedFrame)
+
+		case <-gapTicker.C:
+			// Network Gap detected! The other side is lagging or a packet dropped.
+			// Trigger Opus Packet Loss Concealment (PLC)
+
+			// Passing an empty slice directly synthesizes 10ms of extrapolated audio
+			// using WSOLA pitch-sync against the last known good frame.
+			plcFrame := codec.Decode([]byte{})
+			if plcFrame != nil {
+				rb.Write(plcFrame)
+			}
+
 		case <-logTicker.C:
 			if framesReceived > 0 {
 				log.Printf("[MAC/RECV Debug] Receiving... Opus Packets:%d | Successfully Decoded/Played:%d", framesReceived, framesDecoded)

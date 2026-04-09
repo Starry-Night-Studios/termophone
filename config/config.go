@@ -13,8 +13,9 @@ type Contact struct {
 }
 
 type Config struct {
-	Username string    `json:"username"`
-	Contacts []Contact `json:"contacts"`
+	Username        string    `json:"username"`
+	Contacts        []Contact `json:"contacts"`
+	AECTrimOffsetMs int       `json:"aec_trim_offset_ms"`
 }
 
 var (
@@ -38,7 +39,11 @@ func Get() *Config {
 	}
 
 	path := getPath()
-	current = &Config{Username: "Anon", Contacts: []Contact{}}
+	current = &Config{
+		Username:        "Anon",
+		Contacts:        []Contact{},
+		AECTrimOffsetMs: 120, // Default hardware delay offset
+	}
 	file, err := os.Open(path)
 	if err == nil {
 		json.NewDecoder(file).Decode(current)
