@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,14 +34,25 @@ func (cw chanWriter) Write(p []byte) (int, error) {
 
 func main() {
 	logCh := make(chan string, 32)
-	audio.InitFilterLog(chanWriter(logCh))
+	cw := chanWriter(logCh)
+
+	// Create a native structured JSON logger
+	handler := slog.NewJSONHandler(cw, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	})
+	slogger := slog.New(handler)
+	slog.SetDefault(slogger)
+
+	// Bridge the standard "log" package to output JSON via slog
+	log.SetOutput(cw)
+	log.SetFlags(0)
 
 	cfg := config.Get()
-	log.Printf("Starting Termophone P2P Node (User: %s)...", cfg.Username)
+	slog.Info("Starting Termophone P2P Node", "user", cfg.Username)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	h, kadDHT, ds, incomingStreamCh, err := vnet.SetupHost(ctx, 0, cfg.Username)
+	h, kadDHT, ds, incomingStreamCh, _, err := vnet.SetupHost(ctx, 0, cfg.Username)
 	if err != nil {
 		log.Fatal("Failed to setup libp2p host:", err)
 	}
@@ -67,6 +79,14 @@ func main() {
 		sendCh := make(chan []byte, 8)
 		recvCh := make(chan []byte, 16)
 		filteredSendCh := make(chan []byte, 8)
+
+		// Pre-allocated Zero-Allocation audio capture free-list!
+		// 32 frames of buffers allows plenty of headroom for the pipeline.
+		freePool := make(chan []byte, 32)
+		for i := 0; i < 32; i++ {
+			freePool <- make([]byte, audio.FrameBytes)
+		}
+
 		var disconnectOnce sync.Once
 		var mctx *malgo.AllocatedContext
 		var capturer *audio.Capturer

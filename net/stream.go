@@ -11,10 +11,13 @@ import (
 // Writer takes the compressed Opus frames from the pipeline and sends them over the p2p stream
 func Writer(stream network.Stream, sendCh <-chan []byte) {
 	defer stream.Close()
-	header := make([]byte, 4) // allocate once outside loop
+	header := make([]byte, 6) // length (4) + seq (2)
+	var seq uint16
 
 	for chunk := range sendCh {
-		binary.LittleEndian.PutUint32(header, uint32(len(chunk)))
+		binary.LittleEndian.PutUint32(header[0:4], uint32(len(chunk)))
+		binary.LittleEndian.PutUint16(header[4:6], seq)
+		seq++
 		if _, err := stream.Write(header); err != nil {
 			log.Println("P2P stream write error:", err)
 			return
@@ -41,7 +44,9 @@ func Reader(stream network.Stream, recvCh chan<- []byte) {
 			}
 			return
 		}
-		length := binary.LittleEndian.Uint32(header)
+		length := binary.LittleEndian.Uint32(header[0:4])
+		seq := binary.LittleEndian.Uint16(header[4:6])
+
 		if length == 0 || length > 1024*1024 {
 			log.Printf("unexpected packet size %d, dropping connection", length)
 			return
@@ -53,13 +58,8 @@ func Reader(stream network.Stream, recvCh chan<- []byte) {
 			log.Println("P2P stream payload read error:", err)
 			return
 		}
-
-		// Allocate exact size for the channel to avoid overwriting during processing
-		frame := make([]byte, length)
-		copy(frame, payload)
-
 		select {
-		case recvCh <- frame:
+		case recvCh <- payload:
 		default:
 			log.Println("recv dropped frame")
 		}

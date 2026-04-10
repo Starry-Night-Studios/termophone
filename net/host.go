@@ -16,9 +16,11 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/p2p/host/peerstore/pstoreds"
+	libp2pquic "github.com/libp2p/go-libp2p/p2p/transport/quic"
 )
 
 const ProtocolID = "/termophone/audio/1.0.0"
+const ControlProtocolID = "/termophone/control/1.0.0"
 
 func getIdentityAndStore(ctx context.Context) (crypto.PrivKey, datastore.Batching, error) {
 	home, err := os.UserHomeDir()
@@ -62,31 +64,35 @@ func getIdentityAndStore(ctx context.Context) (crypto.PrivKey, datastore.Batchin
 }
 
 // SetupHost creates a new libp2p host, loads identity, attaches peerstore, and runs Kad DHT.
-func SetupHost(ctx context.Context, listenPort int, username string) (host.Host, *dht.IpfsDHT, datastore.Batching, <-chan network.Stream, error) {
+func SetupHost(ctx context.Context, listenPort int, username string) (host.Host, *dht.IpfsDHT, datastore.Batching, <-chan network.Stream, <-chan network.Stream, error) {
 	priv, ds, err := getIdentityAndStore(ctx)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to initialize identity/store: %v", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("failed to initialize identity/store: %v", err)
 	}
 
 	ps, err := pstoreds.NewPeerstore(ctx, ds, pstoreds.DefaultOpts())
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to create persistent peerstore: %v", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("failed to create persistent peerstore: %v", err)
 	}
 
 	h, err := libp2p.New(
-		libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", listenPort)),
+		libp2p.ListenAddrStrings(
+			fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", listenPort),
+			fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", listenPort),
+		),
+		libp2p.Transport(libp2pquic.NewTransport),
 		libp2p.UserAgent("termophone/"+username),
 		libp2p.Identity(priv),
 		libp2p.Peerstore(ps),
 	)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	// Setup Kademlia DHT
 	kadDHT, err := dht.New(ctx, h)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to create DHT: %v", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("failed to create DHT: %v", err)
 	}
 
 	// Bootstrap the DHT
@@ -95,13 +101,24 @@ func SetupHost(ctx context.Context, listenPort int, username string) (host.Host,
 	}
 
 	streamCh := make(chan network.Stream, 1)
+	controlCh := make(chan network.Stream, 1)
 
 	h.SetStreamHandler(ProtocolID, func(s network.Stream) {
-		log.Printf("Incoming connection from: %s", s.Conn().RemotePeer())
+		log.Printf("Incoming audio connection from: %s", s.Conn().RemotePeer())
 		select {
 		case streamCh <- s:
 		default:
-			log.Println("Incoming stream dropped (already connected to a peer)")
+			log.Println("Incoming audio stream dropped (already connected to a peer)")
+			s.Reset()
+		}
+	})
+
+	h.SetStreamHandler(ControlProtocolID, func(s network.Stream) {
+		log.Printf("Incoming control connection from: %s", s.Conn().RemotePeer())
+		select {
+		case controlCh <- s:
+		default:
+			log.Println("Incoming control stream dropped")
 			s.Reset()
 		}
 	})
@@ -111,5 +128,5 @@ func SetupHost(ctx context.Context, listenPort int, username string) (host.Host,
 		log.Printf("  %s/p2p/%s", addr, h.ID())
 	}
 
-	return h, kadDHT, ds, streamCh, nil
+	return h, kadDHT, ds, streamCh, controlCh, nil
 }

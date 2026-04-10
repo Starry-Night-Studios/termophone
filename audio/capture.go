@@ -8,7 +8,7 @@ type Capturer struct {
 	device *malgo.Device
 }
 
-func NewCapturer(ctx *malgo.AllocatedContext, rawCh chan<- []byte) (*Capturer, error) {
+func NewCapturer(ctx *malgo.AllocatedContext, rawCh chan<- []byte, freePool chan []byte) (*Capturer, error) {
 	c := &Capturer{}
 
 	cfg := malgo.DefaultDeviceConfig(malgo.Capture)
@@ -22,7 +22,13 @@ func NewCapturer(ctx *malgo.AllocatedContext, rawCh chan<- []byte) (*Capturer, e
 	cfg.Wasapi.NoAutoStreamRouting = 1
 	cfg.Alsa.NoMMap = 1
 
-	var capBuf []byte
+	// Pre-allocated fixed-size ring buffer for incoming OS audio data
+	// 100ms capacity (10 frames) is plenty for the capture side
+	capRb := NewRingBuffer(FrameBytes * 10)
+	capRb.prebuffering = false // Capture doesn't need prebuffering logic
+
+	// Single, pre-allocated trash array for when the pipeline falls critically behind
+	trashFrame := make([]byte, FrameBytes)
 
 	callbacks := malgo.DeviceCallbacks{
 		Data: func(_, inputSamples []byte, _ uint32) {
@@ -30,22 +36,32 @@ func NewCapturer(ctx *malgo.AllocatedContext, rawCh chan<- []byte) (*Capturer, e
 				return
 			}
 
-			// Append new OS audio data to our temporary capture buffer
-			capBuf = append(capBuf, inputSamples...)
+			// Push raw hardware audio into our allocation-free ring buffer
+			capRb.Write(inputSamples)
 
 			// Slice it into perfect 10ms (FrameBytes) chunks
-			for len(capBuf) >= FrameBytes {
-				frame := make([]byte, FrameBytes)
-				copy(frame, capBuf[:FrameBytes])
+			for capRb.Fill() >= FrameBytes {
+				var frame []byte
+				select {
+				case frame = <-freePool:
+				default:
+					// Pool exhausted! Pipeline is backed up. Drop newest frame.
+					capRb.Read(trashFrame)
+					continue
+				}
 
-				// Re-use backing array memory to stop GC stalls (cracking)
-				copy(capBuf, capBuf[FrameBytes:])
-				capBuf = capBuf[:len(capBuf)-FrameBytes]
+				// Read directly into our pre-allocated, GC-immune byte slice
+				capRb.Read(frame)
 
 				select {
 				case rawCh <- frame:
 				default:
 					// Drop frame if pipeline is busy (prevents lag building up)
+					// Return to pool so we don't leak it!
+					select {
+					case freePool <- frame:
+					default:
+					}
 				}
 			}
 		},
