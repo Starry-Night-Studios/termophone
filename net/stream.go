@@ -11,18 +11,16 @@ import (
 // Writer takes the compressed Opus frames from the pipeline and sends them over the p2p stream
 func Writer(stream network.Stream, sendCh <-chan []byte) {
 	defer stream.Close()
-	header := make([]byte, 6) // length (4) + seq (2)
 	var seq uint16
 
 	for chunk := range sendCh {
-		binary.LittleEndian.PutUint32(header[0:4], uint32(len(chunk)))
-		binary.LittleEndian.PutUint16(header[4:6], seq)
+		frame := make([]byte, 6+len(chunk))
+		binary.LittleEndian.PutUint32(frame[0:4], uint32(len(chunk)))
+		binary.LittleEndian.PutUint16(frame[4:6], seq)
 		seq++
-		if _, err := stream.Write(header); err != nil {
-			log.Println("P2P stream write error:", err)
-			return
-		}
-		if _, err := stream.Write(chunk); err != nil {
+		copy(frame[6:], chunk)
+
+		if _, err := stream.Write(frame); err != nil {
 			log.Println("P2P stream write error:", err)
 			return
 		}

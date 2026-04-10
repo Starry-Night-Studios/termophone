@@ -52,7 +52,7 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	h, kadDHT, ds, incomingStreamCh, _, err := vnet.SetupHost(ctx, 0, cfg.Username)
+	h, kadDHT, ds, incomingStreamCh, err := vnet.SetupHost(ctx, 0, cfg.Username)
 	if err != nil {
 		log.Fatal("Failed to setup libp2p host:", err)
 	}
@@ -145,8 +145,8 @@ func main() {
 			return
 		}
 
-		// Hardcoded aecDelay parameter, or fetch from config
-		aecDelayMs := 60
+		// Fetch aecDelay parameter from config
+		aecDelayMs := config.Get().AECTrimOffsetMs
 
 		go audio.NewPipeline(rawCh, sendCh, rb, aecDelayMs, freePool).Run(callCtx)
 		go audio.RecvPipeline(recvCh, rb, codec)
@@ -172,7 +172,11 @@ func main() {
 						return
 					}
 					if !muted.Load() {
-						filteredSendCh <- b
+						select {
+						case filteredSendCh <- b:
+						default:
+							// drop frame while muted/backpressured
+						}
 					}
 				}
 			}
