@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"termophone/config"
+	vnet "termophone/net"
 )
 
 type uiState int
@@ -67,6 +69,9 @@ type Model struct {
 	loss      float64
 	latencyMs int
 	logs      []string
+
+	sharingScreen bool
+	cancelScreen  context.CancelFunc
 
 	debug     bool
 	callStart time.Time
@@ -191,6 +196,7 @@ func (m Model) isOnline(peerID string) bool {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	skipSettingsInputUpdate := false
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -200,6 +206,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "m", "M":
 			if m.state == stateInCall {
 				m.muted.Store(!m.muted.Load())
+			}
+		case "v", "V":
+			if m.state == stateInCall {
+				if m.sharingScreen {
+					if m.cancelScreen != nil {
+						m.cancelScreen()
+						m.cancelScreen = nil
+					}
+					m.sharingScreen = false
+				} else {
+					targetID, _ := peer.Decode(m.peerID)
+					ctx, cancel := context.WithCancel(context.Background())
+					m.cancelScreen = cancel
+					m.sharingScreen = true
+					go func() {
+						vnet.StartScreenShare(ctx, m.h, targetID)
+					}()
+				}
 			}
 		case "d", "D":
 			m.debug = !m.debug
@@ -211,6 +235,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateSettings
 				m.usernameInput.Focus()
 				m.settingsCursor = 0
+				skipSettingsInputUpdate = true
 			case "r", "R":
 				m.peers = nil
 				m.newPeers = nil
@@ -398,6 +423,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		for range drain(m.disconnCh) {
+			if m.sharingScreen {
+				if m.cancelScreen != nil {
+					m.cancelScreen()
+					m.cancelScreen = nil
+				}
+				m.sharingScreen = false
+			}
+
 			isContact := false
 			for _, c := range m.contacts {
 				if c.PeerID == m.peerID {
@@ -424,7 +457,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.WindowHeight = msg.Height
 	}
 
-	if m.state == stateSettings {
+	if m.state == stateSettings && !skipSettingsInputUpdate {
 		var cmd tea.Cmd
 		m.usernameInput, cmd = m.usernameInput.Update(msg)
 		cmds = append(cmds, cmd)

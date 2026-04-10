@@ -89,7 +89,7 @@ func (m Model) renderSidebar() string {
 				rawStatus = "[O]"
 			}
 			rowText := fmt.Sprintf("  %s %s", rawStatus, name)
-			// Truncate if too long (26 is the width of our sidebar selection)
+
 			if len(rowText) > 26 {
 				rowText = rowText[:26]
 			}
@@ -173,7 +173,14 @@ func (m Model) renderMainPane() string {
 
 		b.WriteString(fmt.Sprintf("      Duration : %s\n", st.Info.Render(durStr)))
 		b.WriteString(fmt.Sprintf("      Mic      : %s\n", muteStatus))
+
+		videoStatus := st.Dim.Render("OFF")
+		if m.sharingScreen {
+			videoStatus = st.Online.Render("SHARING")
+		}
+		b.WriteString(fmt.Sprintf("      Video    : %s (H264/480p)\n", videoStatus))
 		b.WriteString(fmt.Sprintf("      Codec    : Opus (48kHz)\n\n"))
+		b.WriteString(st.Dim.Render("      Controls : [M] mute/unmute   [V] screen share") + "\n\n")
 
 		b.WriteString(st.Title.Render(" STATS ") + "\n")
 		b.WriteString(fmt.Sprintf("      Local Peak : %s\n", st.Info.Render(rmsToDb(m.localRMS))))
@@ -185,9 +192,12 @@ func (m Model) renderMainPane() string {
 	return b.String()
 }
 
-func (m Model) renderLogs(maxLines int) string {
+func (m Model) renderLogs(maxLines int, maxWidth int) string {
 	if maxLines <= 0 {
 		return ""
+	}
+	if maxWidth < 8 {
+		maxWidth = 8
 	}
 	st := m.getStyles()
 	b := strings.Builder{}
@@ -195,8 +205,17 @@ func (m Model) renderLogs(maxLines int) string {
 	if len(m.logs) > maxLines {
 		start = len(m.logs) - maxLines
 	}
+	contentWidth := maxWidth - 4 // account for "  > " prefix
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
 	for i := start; i < len(m.logs); i++ {
-		b.WriteString(st.Log.Render("  > " + m.logs[i]))
+		line := m.logs[i]
+		runes := []rune(line)
+		if len(runes) > contentWidth {
+			line = string(runes[:contentWidth])
+		}
+		b.WriteString(st.Log.Render("  > " + line))
 		if i < len(m.logs)-1 {
 			b.WriteString("\n")
 		}
@@ -237,7 +256,7 @@ func (m Model) View() string {
 			maxLogLines = 0
 		}
 
-		logsContent := m.renderLogs(maxLogLines)
+		logsContent := m.renderLogs(maxLogLines, mainWidth-2)
 		logsBlock := divider
 		if logsContent != "" {
 			logsBlock += "\n" + logsContent
@@ -260,7 +279,10 @@ func (m Model) View() string {
 	split := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
 	full := st.Border.Render(split)
 
-	keysStr := "  [up/down] navigate  [Enter] connect  [S] settings  [R] reload  [X] remove  [M] mute  [Q] quit"
+	keysStr := "  [up/down] navigate  [Enter] connect  [S] settings  [R] reload  [X] remove  [Q] quit"
+	if m.state == stateInCall {
+		keysStr = "  [D] debug  [Q] quit"
+	}
 	ioStr := "System Default  "
 
 	// Create a responsive footer that aligns the IO text to the right

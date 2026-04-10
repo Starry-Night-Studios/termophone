@@ -31,8 +31,8 @@ func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	select {
 	case n.peerCh <- pi:
 	default:
-                log.Println("Discovery queue full; dropped peer:", pi.ID)
-        }
+		log.Println("Discovery queue full; dropped peer:", pi.ID)
+	}
 }
 
 // SetupDiscovery starts the mDNS beacon service

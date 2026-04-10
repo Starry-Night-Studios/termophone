@@ -65,52 +65,57 @@ func getIdentityAndStore(ctx context.Context) (crypto.PrivKey, datastore.Batchin
 
 // SetupHost creates a new libp2p host, loads identity, attaches peerstore, and runs Kad DHT.
 func SetupHost(ctx context.Context, listenPort int, username string) (host.Host, *dht.IpfsDHT, datastore.Batching, <-chan network.Stream, error) {
-        priv, ds, err := getIdentityAndStore(ctx)
-        if err != nil {
-                return nil, nil, nil, nil, fmt.Errorf("failed to initialize identity/store: %v", err)
-        }
+	priv, ds, err := getIdentityAndStore(ctx)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("failed to initialize identity/store: %v", err)
+	}
 
-        ps, err := pstoreds.NewPeerstore(ctx, ds, pstoreds.DefaultOpts())
-        if err != nil {
-                return nil, nil, nil, nil, fmt.Errorf("failed to create persistent peerstore: %v", err)
-        }
+	ps, err := pstoreds.NewPeerstore(ctx, ds, pstoreds.DefaultOpts())
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("failed to create persistent peerstore: %v", err)
+	}
 
-        h, err := libp2p.New(
-                libp2p.ListenAddrStrings(
-                        fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", listenPort),
-                        fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", listenPort),
-                ),
-                libp2p.Transport(libp2pquic.NewTransport),
-                libp2p.UserAgent("termophone/"+username),
-                libp2p.Identity(priv),
-                libp2p.Peerstore(ps),
-        )
-        if err != nil {
-                return nil, nil, nil, nil, err
-        }
+	h, err := libp2p.New(
+		libp2p.ListenAddrStrings(
+			fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", listenPort),
+			fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", listenPort),
+		),
+		libp2p.Transport(libp2pquic.NewTransport),
+		libp2p.UserAgent("termophone/"+username),
+		libp2p.Identity(priv),
+		libp2p.Peerstore(ps),
+	)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
 
-        // Setup Kademlia DHT in client mode to avoid unnecessary WAN traffic
-        kadDHT, err := dht.New(ctx, h, dht.Mode(dht.ModeClient))
-        if err != nil {
-                return nil, nil, nil, nil, fmt.Errorf("failed to create DHT: %v", err)
-        }
+	// Setup Kademlia DHT in client mode to avoid unnecessary WAN traffic
+	kadDHT, err := dht.New(ctx, h, dht.Mode(dht.ModeClient))
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("failed to create DHT: %v", err)
+	}
 
-        streamCh := make(chan network.Stream, 1)
+	streamCh := make(chan network.Stream, 1)
 
-        h.SetStreamHandler(ProtocolID, func(s network.Stream) {
-                log.Printf("Incoming audio connection from: %s", s.Conn().RemotePeer())
-                select {
-                case streamCh <- s:
-                default:
-                        log.Println("Incoming audio stream dropped (already connected to a peer)")
-                        s.Reset()
-                }
-        })
+	h.SetStreamHandler(ProtocolID, func(s network.Stream) {
+		log.Printf("Incoming audio connection from: %s", s.Conn().RemotePeer())
+		select {
+		case streamCh <- s:
+		default:
+			log.Println("Incoming audio stream dropped (already connected to a peer)")
+			s.Reset()
+		}
+	})
 
-        log.Printf("libp2p Host Started! ID: %s", h.ID())
-        for _, addr := range h.Addrs() {
-                log.Printf("  %s/p2p/%s", addr, h.ID())
-        }
+	h.SetStreamHandler(VideoProtocolID, func(s network.Stream) {
+		log.Printf("Incoming screen share connection from: %s", s.Conn().RemotePeer())
+		ReceiveScreenShare(ctx, s)
+	})
 
-        return h, kadDHT, ds, streamCh, nil
+	log.Printf("libp2p Host Started! ID: %s", h.ID())
+	for _, addr := range h.Addrs() {
+		log.Printf("  %s/p2p/%s", addr, h.ID())
+	}
+
+	return h, kadDHT, ds, streamCh, nil
 }

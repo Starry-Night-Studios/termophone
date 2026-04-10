@@ -15,10 +15,22 @@ type Theme struct {
 }
 
 var themeNames = []string{
+
 	"Lavender", "Sage", "Steel", "Dust", "Rose", "Peach",
+
 	"Neon Purple", "Neon Green", "Neon Blue", "Neon Red",
-	"Monochrome", "High Contrast","Ocean", "Ember", "Dusk", "Moss", "Copper",
-	"Arctic", "Terminal", "Dracula", "Solarized", "Candy",
+
+	"Monochrome", "High Contrast",
+
+	"Ocean", "Arctic", "Moss", "Copper", "Ember",
+
+	"Dusk", "Dracula", "Solarized", "Terminal", "Candy",
+
+	"Aurora", "Volcano", "Matrix", "Midnight Gold", "Glacier", "Sakura Night",
+	"Toxic Lime", "Royal Indigo", "Retro Sunset", "Noir Crimson", "Mint Chip", "Electric Mango",
+
+	"Nord", "Gruvbox Dark", "Catppuccin Mocha", "One Dark Pro", "Tokyo Night",
+	"Monokai Pro", "Everforest Dark", "Kanagawa Wave", "GitHub Dark", "Night Owl",
 }
 
 var themes = []Theme{
@@ -178,55 +190,7 @@ var themes = []Theme{
 		Offline: lipgloss.Color("#c96969"),
 		Dim:     lipgloss.Color("#5a5a5a"),
 	},
-	// 13: Ember (Dark Orange/Amber)
-	{
-		Border:  lipgloss.Color("#c87941"),
-		Title:   lipgloss.Color("#e8b87a"),
-		Info:    lipgloss.Color("#d4955a"),
-		Meter:   lipgloss.Color("#f0ce9a"),
-		Log:     lipgloss.Color("#a85f2e"),
-		Help:    lipgloss.Color("#7a4018"),
-		Online:  lipgloss.Color("#7ab087"),
-		Offline: lipgloss.Color("#c96969"),
-		Dim:     lipgloss.Color("#5a5a5a"),
-	},
-	// 14: Dusk (Purple/Blue twilight)
-	{
-		Border:  lipgloss.Color("#6a6aab"),
-		Title:   lipgloss.Color("#a0a0d8"),
-		Info:    lipgloss.Color("#8080bc"),
-		Meter:   lipgloss.Color("#b8b8e8"),
-		Log:     lipgloss.Color("#505090"),
-		Help:    lipgloss.Color("#383878"),
-		Online:  lipgloss.Color("#7ab087"),
-		Offline: lipgloss.Color("#b87474"),
-		Dim:     lipgloss.Color("#5a5a5a"),
-	},
-	// 15: Moss (Dark earthy green)
-	{
-		Border:  lipgloss.Color("#6b8c5a"),
-		Title:   lipgloss.Color("#9ab88a"),
-		Info:    lipgloss.Color("#7da068"),
-		Meter:   lipgloss.Color("#b2cc9a"),
-		Log:     lipgloss.Color("#526b42"),
-		Help:    lipgloss.Color("#3a4e2e"),
-		Online:  lipgloss.Color("#a0c878"),
-		Offline: lipgloss.Color("#c96969"),
-		Dim:     lipgloss.Color("#5a5a5a"),
-	},
-	// 16: Copper (Warm metallic)
-	{
-		Border:  lipgloss.Color("#b87333"),
-		Title:   lipgloss.Color("#d4a55a"),
-		Info:    lipgloss.Color("#c48840"),
-		Meter:   lipgloss.Color("#e8c080"),
-		Log:     lipgloss.Color("#8a5520"),
-		Help:    lipgloss.Color("#5e3510"),
-		Online:  lipgloss.Color("#7ab087"),
-		Offline: lipgloss.Color("#c96969"),
-		Dim:     lipgloss.Color("#5a5a5a"),
-	},
-	// 17: Arctic (Icy blue/white)
+	// 13: Arctic (Icy blue/white)
 	{
 		Border:  lipgloss.Color("#90c8d8"),
 		Title:   lipgloss.Color("#c8e8f0"),
@@ -238,19 +202,55 @@ var themes = []Theme{
 		Offline: lipgloss.Color("#c87878"),
 		Dim:     lipgloss.Color("#606060"),
 	},
-	// 18: Terminal (Classic green-on-black CRT)
+	// 14: Moss (Dark earthy green)
 	{
-		Border:  lipgloss.Color("#00aa00"),
-		Title:   lipgloss.Color("#00ff00"),
-		Info:    lipgloss.Color("#00cc00"),
-		Meter:   lipgloss.Color("#00dd00"),
-		Log:     lipgloss.Color("#008800"),
-		Help:    lipgloss.Color("#006600"),
-		Online:  lipgloss.Color("#00ff00"),
-		Offline: lipgloss.Color("#aa0000"),
-		Dim:     lipgloss.Color("#004400"),
+		Border:  lipgloss.Color("#6b8c5a"),
+		Title:   lipgloss.Color("#9ab88a"),
+		Info:    lipgloss.Color("#7da068"),
+		Meter:   lipgloss.Color("#b2cc9a"),
+		Log:     lipgloss.Color("#526b42"),
+		Help:    lipgloss.Color("#3a4e2e"),
+		Online:  lipgloss.Color("#a0c878"),
+		Offline: lipgloss.Color("#c96969"),
+		Dim:     lipgloss.Color("#5a5a5a"),
 	},
-	// 19: Dracula (Popular dark theme)
+	// 15: Copper (Warm metallic)
+	{
+		Border:  lipgloss.Color("#b87333"),
+		Title:   lipgloss.Color("#d4a55a"),
+		Info:    lipgloss.Color("#c48840"),
+		Meter:   lipgloss.Color("#e8c080"),
+		Log:     lipgloss.Color("#8a5520"),
+		Help:    lipgloss.Color("#5e3510"),
+		Online:  lipgloss.Color("#7ab087"),
+		Offline: lipgloss.Color("#c96969"),
+		Dim:     lipgloss.Color("#5a5a5a"),
+	},
+	// 16: Ember (Dark Orange/Amber)
+	{
+		Border:  lipgloss.Color("#c87941"),
+		Title:   lipgloss.Color("#e8b87a"),
+		Info:    lipgloss.Color("#d4955a"),
+		Meter:   lipgloss.Color("#f0ce9a"),
+		Log:     lipgloss.Color("#a85f2e"),
+		Help:    lipgloss.Color("#7a4018"),
+		Online:  lipgloss.Color("#7ab087"),
+		Offline: lipgloss.Color("#c96969"),
+		Dim:     lipgloss.Color("#5a5a5a"),
+	},
+	// 17: Dusk (Purple/Blue twilight)
+	{
+		Border:  lipgloss.Color("#6a6aab"),
+		Title:   lipgloss.Color("#a0a0d8"),
+		Info:    lipgloss.Color("#8080bc"),
+		Meter:   lipgloss.Color("#b8b8e8"),
+		Log:     lipgloss.Color("#505090"),
+		Help:    lipgloss.Color("#383878"),
+		Online:  lipgloss.Color("#7ab087"),
+		Offline: lipgloss.Color("#b87474"),
+		Dim:     lipgloss.Color("#5a5a5a"),
+	},
+	// 18: Dracula (Popular dark theme)
 	{
 		Border:  lipgloss.Color("#bd93f9"),
 		Title:   lipgloss.Color("#f8f8f2"),
@@ -262,7 +262,7 @@ var themes = []Theme{
 		Offline: lipgloss.Color("#ff5555"),
 		Dim:     lipgloss.Color("#44475a"),
 	},
-	// 20: Solarized (Warm dark)
+	// 19: Solarized (Warm dark)
 	{
 		Border:  lipgloss.Color("#268bd2"),
 		Title:   lipgloss.Color("#2aa198"),
@@ -273,6 +273,18 @@ var themes = []Theme{
 		Online:  lipgloss.Color("#859900"),
 		Offline: lipgloss.Color("#dc322f"),
 		Dim:     lipgloss.Color("#073642"),
+	},
+	// 20: Terminal (Classic green-on-black CRT)
+	{
+		Border:  lipgloss.Color("#00aa00"),
+		Title:   lipgloss.Color("#00ff00"),
+		Info:    lipgloss.Color("#00cc00"),
+		Meter:   lipgloss.Color("#00dd00"),
+		Log:     lipgloss.Color("#008800"),
+		Help:    lipgloss.Color("#006600"),
+		Online:  lipgloss.Color("#00ff00"),
+		Offline: lipgloss.Color("#aa0000"),
+		Dim:     lipgloss.Color("#004400"),
 	},
 	// 21: Candy (Bright pastels)
 	{
@@ -286,5 +298,268 @@ var themes = []Theme{
 		Offline: lipgloss.Color("#e76f51"),
 		Dim:     lipgloss.Color("#606060"),
 	},
+	// 22: Aurora (Vivid polar lights)
+	{
+		Border:  lipgloss.Color("#39d0ff"),
+		Title:   lipgloss.Color("#8cf7ff"),
+		Info:    lipgloss.Color("#62e7e2"),
+		Meter:   lipgloss.Color("#7bffb7"),
+		Log:     lipgloss.Color("#3ca0b8"),
+		Help:    lipgloss.Color("#2b6f82"),
+		Online:  lipgloss.Color("#52ff9a"),
+		Offline: lipgloss.Color("#ff5f73"),
+		Dim:     lipgloss.Color("#4a5d66"),
+	},
+	// 23: Volcano (Lava and basalt)
+	{
+		Border:  lipgloss.Color("#ff5c33"),
+		Title:   lipgloss.Color("#ffc08a"),
+		Info:    lipgloss.Color("#ff8b5f"),
+		Meter:   lipgloss.Color("#ffd166"),
+		Log:     lipgloss.Color("#b54a2e"),
+		Help:    lipgloss.Color("#7c2f20"),
+		Online:  lipgloss.Color("#9be564"),
+		Offline: lipgloss.Color("#ff3b30"),
+		Dim:     lipgloss.Color("#5b4a45"),
+	},
+	// 24: Matrix (Cyber green terminal)
+	{
+		Border:  lipgloss.Color("#00d100"),
+		Title:   lipgloss.Color("#8cff8c"),
+		Info:    lipgloss.Color("#4dff6a"),
+		Meter:   lipgloss.Color("#adff2f"),
+		Log:     lipgloss.Color("#2ea83a"),
+		Help:    lipgloss.Color("#1c6f29"),
+		Online:  lipgloss.Color("#67ff5a"),
+		Offline: lipgloss.Color("#ff4f4f"),
+		Dim:     lipgloss.Color("#335033"),
+	},
+	// 25: Midnight Gold (Dark luxury)
+	{
+		Border:  lipgloss.Color("#d4af37"),
+		Title:   lipgloss.Color("#f6e27a"),
+		Info:    lipgloss.Color("#e0c15b"),
+		Meter:   lipgloss.Color("#ffd700"),
+		Log:     lipgloss.Color("#a8892f"),
+		Help:    lipgloss.Color("#7a6222"),
+		Online:  lipgloss.Color("#7bcf7b"),
+		Offline: lipgloss.Color("#d95a5a"),
+		Dim:     lipgloss.Color("#5f5540"),
+	},
+	// 26: Glacier (Frosted cyan)
+	{
+		Border:  lipgloss.Color("#7fdfff"),
+		Title:   lipgloss.Color("#d8f6ff"),
+		Info:    lipgloss.Color("#a6ebff"),
+		Meter:   lipgloss.Color("#c1f3ff"),
+		Log:     lipgloss.Color("#6bb7cf"),
+		Help:    lipgloss.Color("#4a8092"),
+		Online:  lipgloss.Color("#89e8b5"),
+		Offline: lipgloss.Color("#e07b7b"),
+		Dim:     lipgloss.Color("#5e6a70"),
+	},
+	// 27: Sakura Night (Pink and plum)
+	{
+		Border:  lipgloss.Color("#ff77b7"),
+		Title:   lipgloss.Color("#ffd3ea"),
+		Info:    lipgloss.Color("#ff9dcc"),
+		Meter:   lipgloss.Color("#ffc0f0"),
+		Log:     lipgloss.Color("#b36088"),
+		Help:    lipgloss.Color("#7e3f61"),
+		Online:  lipgloss.Color("#8edfa3"),
+		Offline: lipgloss.Color("#ff6b6b"),
+		Dim:     lipgloss.Color("#6b5262"),
+	},
+	// 28: Toxic Lime (Acid green)
+	{
+		Border:  lipgloss.Color("#b7ff00"),
+		Title:   lipgloss.Color("#e7ff87"),
+		Info:    lipgloss.Color("#d4ff3f"),
+		Meter:   lipgloss.Color("#f1ff9e"),
+		Log:     lipgloss.Color("#89b82b"),
+		Help:    lipgloss.Color("#5f8020"),
+		Online:  lipgloss.Color("#7fff5a"),
+		Offline: lipgloss.Color("#ff5d5d"),
+		Dim:     lipgloss.Color("#59664a"),
+	},
+	// 29: Royal Indigo (Regal violet/blue)
+	{
+		Border:  lipgloss.Color("#5a4bff"),
+		Title:   lipgloss.Color("#c4bbff"),
+		Info:    lipgloss.Color("#8f84ff"),
+		Meter:   lipgloss.Color("#b5a9ff"),
+		Log:     lipgloss.Color("#4f45b8"),
+		Help:    lipgloss.Color("#3b337f"),
+		Online:  lipgloss.Color("#6fd98f"),
+		Offline: lipgloss.Color("#f06363"),
+		Dim:     lipgloss.Color("#57546d"),
+	},
+	// 30: Retro Sunset (Synthwave orange/magenta)
+	{
+		Border:  lipgloss.Color("#ff6f3c"),
+		Title:   lipgloss.Color("#ffb36b"),
+		Info:    lipgloss.Color("#ff8d52"),
+		Meter:   lipgloss.Color("#ff4fd8"),
+		Log:     lipgloss.Color("#b85a3a"),
+		Help:    lipgloss.Color("#803d2a"),
+		Online:  lipgloss.Color("#73e38f"),
+		Offline: lipgloss.Color("#ff5c7a"),
+		Dim:     lipgloss.Color("#66504d"),
+	},
+	// 31: Noir Crimson (Dark with red accents)
+	{
+		Border:  lipgloss.Color("#b22234"),
+		Title:   lipgloss.Color("#ffd1d6"),
+		Info:    lipgloss.Color("#e66f7f"),
+		Meter:   lipgloss.Color("#ff8fa3"),
+		Log:     lipgloss.Color("#8b1f2a"),
+		Help:    lipgloss.Color("#611620"),
+		Online:  lipgloss.Color("#5fd48b"),
+		Offline: lipgloss.Color("#ff4757"),
+		Dim:     lipgloss.Color("#5c4a4e"),
+	},
+	// 32: Mint Chip (Cool mint and chocolate)
+	{
+		Border:  lipgloss.Color("#4ec5a4"),
+		Title:   lipgloss.Color("#c6ffe9"),
+		Info:    lipgloss.Color("#86e6c9"),
+		Meter:   lipgloss.Color("#9cf5d9"),
+		Log:     lipgloss.Color("#3c8f79"),
+		Help:    lipgloss.Color("#2c6657"),
+		Online:  lipgloss.Color("#7be495"),
+		Offline: lipgloss.Color("#e06c75"),
+		Dim:     lipgloss.Color("#4f5c58"),
+	},
+	// 33: Electric Mango (Hot orange/yellow)
+	{
+		Border:  lipgloss.Color("#ff9f1c"),
+		Title:   lipgloss.Color("#ffe08a"),
+		Info:    lipgloss.Color("#ffc35a"),
+		Meter:   lipgloss.Color("#ffd60a"),
+		Log:     lipgloss.Color("#b87316"),
+		Help:    lipgloss.Color("#805010"),
+		Online:  lipgloss.Color("#7fdc72"),
+		Offline: lipgloss.Color("#f25f5c"),
+		Dim:     lipgloss.Color("#675843"),
+	},
+	// 34: Nord
+	{
+		Border:  lipgloss.Color("#81A1C1"),
+		Title:   lipgloss.Color("#ECEFF4"),
+		Info:    lipgloss.Color("#88C0D0"),
+		Meter:   lipgloss.Color("#8FBCBB"),
+		Log:     lipgloss.Color("#5E81AC"),
+		Help:    lipgloss.Color("#4C566A"),
+		Online:  lipgloss.Color("#A3BE8C"),
+		Offline: lipgloss.Color("#BF616A"),
+		Dim:     lipgloss.Color("#434C5E"),
+	},
+	// 35: Gruvbox Dark
+	{
+		Border:  lipgloss.Color("#D79921"),
+		Title:   lipgloss.Color("#FBF1C7"),
+		Info:    lipgloss.Color("#83A598"),
+		Meter:   lipgloss.Color("#FABD2F"),
+		Log:     lipgloss.Color("#B57614"),
+		Help:    lipgloss.Color("#665C54"),
+		Online:  lipgloss.Color("#B8BB26"),
+		Offline: lipgloss.Color("#FB4934"),
+		Dim:     lipgloss.Color("#504945"),
+	},
+	// 36: Catppuccin Mocha
+	{
+		Border:  lipgloss.Color("#89B4FA"),
+		Title:   lipgloss.Color("#CDD6F4"),
+		Info:    lipgloss.Color("#94E2D5"),
+		Meter:   lipgloss.Color("#F5C2E7"),
+		Log:     lipgloss.Color("#7F849C"),
+		Help:    lipgloss.Color("#6C7086"),
+		Online:  lipgloss.Color("#A6E3A1"),
+		Offline: lipgloss.Color("#F38BA8"),
+		Dim:     lipgloss.Color("#585B70"),
+	},
+	// 37: One Dark Pro
+	{
+		Border:  lipgloss.Color("#61AFEF"),
+		Title:   lipgloss.Color("#ABB2BF"),
+		Info:    lipgloss.Color("#56B6C2"),
+		Meter:   lipgloss.Color("#C678DD"),
+		Log:     lipgloss.Color("#5C6370"),
+		Help:    lipgloss.Color("#4B5263"),
+		Online:  lipgloss.Color("#98C379"),
+		Offline: lipgloss.Color("#E06C75"),
+		Dim:     lipgloss.Color("#3E4452"),
+	},
+	// 38: Tokyo Night
+	{
+		Border:  lipgloss.Color("#7AA2F7"),
+		Title:   lipgloss.Color("#C0CAF5"),
+		Info:    lipgloss.Color("#7DCFFF"),
+		Meter:   lipgloss.Color("#BB9AF7"),
+		Log:     lipgloss.Color("#565F89"),
+		Help:    lipgloss.Color("#414868"),
+		Online:  lipgloss.Color("#9ECE6A"),
+		Offline: lipgloss.Color("#F7768E"),
+		Dim:     lipgloss.Color("#3B4261"),
+	},
+	// 39: Monokai Pro
+	{
+		Border:  lipgloss.Color("#FFD866"),
+		Title:   lipgloss.Color("#FCFCFA"),
+		Info:    lipgloss.Color("#78DCE8"),
+		Meter:   lipgloss.Color("#AB9DF2"),
+		Log:     lipgloss.Color("#A9DC76"),
+		Help:    lipgloss.Color("#727072"),
+		Online:  lipgloss.Color("#A9DC76"),
+		Offline: lipgloss.Color("#FF6188"),
+		Dim:     lipgloss.Color("#5B595C"),
+	},
+	// 40: Everforest Dark
+	{
+		Border:  lipgloss.Color("#A7C080"),
+		Title:   lipgloss.Color("#D3C6AA"),
+		Info:    lipgloss.Color("#7FBBB3"),
+		Meter:   lipgloss.Color("#DBBC7F"),
+		Log:     lipgloss.Color("#83C092"),
+		Help:    lipgloss.Color("#5C6A72"),
+		Online:  lipgloss.Color("#A7C080"),
+		Offline: lipgloss.Color("#E67E80"),
+		Dim:     lipgloss.Color("#475258"),
+	},
+	// 41: Kanagawa Wave
+	{
+		Border:  lipgloss.Color("#7E9CD8"),
+		Title:   lipgloss.Color("#DCD7BA"),
+		Info:    lipgloss.Color("#7FB4CA"),
+		Meter:   lipgloss.Color("#957FB8"),
+		Log:     lipgloss.Color("#98BB6C"),
+		Help:    lipgloss.Color("#727169"),
+		Online:  lipgloss.Color("#98BB6C"),
+		Offline: lipgloss.Color("#E46876"),
+		Dim:     lipgloss.Color("#54546D"),
+	},
+	// 42: GitHub Dark
+	{
+		Border:  lipgloss.Color("#58A6FF"),
+		Title:   lipgloss.Color("#C9D1D9"),
+		Info:    lipgloss.Color("#79C0FF"),
+		Meter:   lipgloss.Color("#A371F7"),
+		Log:     lipgloss.Color("#8B949E"),
+		Help:    lipgloss.Color("#6E7681"),
+		Online:  lipgloss.Color("#3FB950"),
+		Offline: lipgloss.Color("#F85149"),
+		Dim:     lipgloss.Color("#484F58"),
+	},
+	// 43: Night Owl
+	{
+		Border:  lipgloss.Color("#82AAFF"),
+		Title:   lipgloss.Color("#D6DEEB"),
+		Info:    lipgloss.Color("#7FDBCA"),
+		Meter:   lipgloss.Color("#C792EA"),
+		Log:     lipgloss.Color("#7FDBCA"),
+		Help:    lipgloss.Color("#637777"),
+		Online:  lipgloss.Color("#22DA6E"),
+		Offline: lipgloss.Color("#FF5874"),
+		Dim:     lipgloss.Color("#4B6479"),
+	},
 }
-
