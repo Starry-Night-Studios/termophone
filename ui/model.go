@@ -127,97 +127,12 @@ func (m Model) peerDisplayName(id peer.ID) string {
 	return displayName
 }
 
-// NOTE: Since generic channel draining without `any` / type casting can get unreadable, these functions are purposefully duplicated per type. Will be candidate for Go generic funcs eventually.
-func drainPeers(ch <-chan peer.AddrInfo) []peer.AddrInfo {
-	var out []peer.AddrInfo
+func drain[T any](ch <-chan T) []T {
+	var out []T
 	for {
 		select {
-		case p := <-ch:
-			out = append(out, p)
-		default:
-			return out
-		}
-	}
-}
-
-func drainStreams(ch <-chan network.Stream) []network.Stream {
-	var out []network.Stream
-	for {
-		select {
-		case s := <-ch:
-			out = append(out, s)
-		default:
-			return out
-		}
-	}
-}
-
-func drainLogs(ch <-chan string) []string {
-	var out []string
-	for {
-		select {
-		case l := <-ch:
-			out = append(out, l)
-		default:
-			return out
-		}
-	}
-}
-
-func drainAudio(ch <-chan MsgAudioLevel) []MsgAudioLevel {
-	var out []MsgAudioLevel
-	for {
-		select {
-		case a := <-ch:
-			out = append(out, a)
-		default:
-			return out
-		}
-	}
-}
-
-func drainStats(ch <-chan MsgStats) []MsgStats {
-	var out []MsgStats
-	for {
-		select {
-		case s := <-ch:
-			out = append(out, s)
-		default:
-			return out
-		}
-	}
-}
-
-func drainConnects(ch <-chan MsgPeerConnected) []MsgPeerConnected {
-	var out []MsgPeerConnected
-	for {
-		select {
-		case c := <-ch:
-			out = append(out, c)
-		default:
-			return out
-		}
-	}
-}
-
-func drainDisconnects(ch <-chan MsgPeerDisconnected) []MsgPeerDisconnected {
-	var out []MsgPeerDisconnected
-	for {
-		select {
-		case d := <-ch:
-			out = append(out, d)
-		default:
-			return out
-		}
-	}
-}
-
-func drainStatuses(ch <-chan string) []string {
-	var out []string
-	for {
-		select {
-		case s := <-ch:
-			out = append(out, s)
+		case v := <-ch:
+			out = append(out, v)
 		default:
 			return out
 		}
@@ -237,6 +152,13 @@ func (m *Model) updateNewPeers() {
 		if !isContact {
 			m.newPeers = append(m.newPeers, p)
 		}
+	}
+
+	total := len(m.contacts) + len(m.newPeers)
+	if m.cursor >= total && total > 0 {
+		m.cursor = total - 1
+	} else if total == 0 {
+		m.cursor = 0
 	}
 }
 
@@ -372,7 +294,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case MsgTick:
 		cmds = append(cmds, tickCmd())
 
-		for _, p := range drainPeers(m.updateCh) {
+		for _, p := range drain(m.updateCh) {
 			exists := false
 			for _, ep := range m.peers {
 				if ep.ID == p.ID {
@@ -386,7 +308,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		for _, s := range drainStreams(m.streamCh) {
+		for _, s := range drain(m.streamCh) {
 			if m.state == stateBrowsing {
 				m.incomingStream = s
 				m.state = stateIncoming
@@ -395,24 +317,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		for _, l := range drainLogs(m.logCh) {
+		for _, l := range drain(m.logCh) {
 			m.logs = append(m.logs, strings.TrimSpace(l))
 			if len(m.logs) > 8 {
 				m.logs = m.logs[len(m.logs)-8:]
 			}
 		}
 
-		for _, a := range drainAudio(m.audioCh) {
+		for _, a := range drain(m.audioCh) {
 			m.localRMS = 0.8*m.localRMS + 0.2*a.Local
 			m.peerRMS = 0.8*m.peerRMS + 0.2*a.Peer
 		}
 
-		for _, s := range drainStats(m.statsCh) {
+		for _, s := range drain(m.statsCh) {
 			m.loss = s.LossPercent
 			m.latencyMs = s.LatencyMs
 		}
 
-		for _, c := range drainConnects(m.connectCh) {
+		for _, c := range drain(m.connectCh) {
 			m.peerName = c.Name
 			m.peerID = c.ID
 			m.state = stateInCall
@@ -420,13 +342,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = ""
 		}
 
-		for _, s := range drainStatuses(m.statusCh) {
+		for _, s := range drain(m.statusCh) {
 			if m.state == stateBrowsing {
 				m.statusMsg = s
 			}
 		}
 
-		for range drainDisconnects(m.disconnCh) {
+		for range drain(m.disconnCh) {
 			isContact := false
 			for _, c := range m.contacts {
 				if c.PeerID == m.peerID {

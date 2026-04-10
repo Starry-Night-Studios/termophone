@@ -29,10 +29,15 @@ func NewPipeline(rawCh <-chan []byte, sendCh chan<- []byte, rb *RingBuffer) *Pip
 		panic(err)
 	}
 
+	codec, err := NewCodec()
+	if err != nil {
+		panic(err)
+	}
+
 	return &Pipeline{
 		rawCh:    rawCh,
 		sendCh:   sendCh,
-		codec:    NewCodec(),
+		codec:    codec,
 		aec:      echoCanceller,
 		denoiser: NewDenoiseState(),
 		rb:       rb,

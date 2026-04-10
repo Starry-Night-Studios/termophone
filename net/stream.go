@@ -31,6 +31,9 @@ func Reader(stream network.Stream, recvCh chan<- []byte) {
 	defer stream.Close()
 	header := make([]byte, 4)
 
+	// Pre-allocate a large buffer to avoid per-frame allocations
+	bufPool := make([]byte, 1024*1024)
+
 	for {
 		if _, err := io.ReadFull(stream, header); err != nil {
 			if err != io.EOF {
@@ -43,13 +46,20 @@ func Reader(stream network.Stream, recvCh chan<- []byte) {
 			log.Printf("unexpected packet size %d, dropping connection", length)
 			return
 		}
-		payload := make([]byte, length)
+
+		// Use a slice of the pre-allocated buffer
+		payload := bufPool[:length]
 		if _, err := io.ReadFull(stream, payload); err != nil {
 			log.Println("P2P stream payload read error:", err)
 			return
 		}
+
+		// Allocate exact size for the channel to avoid overwriting during processing
+		frame := make([]byte, length)
+		copy(frame, payload)
+
 		select {
-		case recvCh <- payload:
+		case recvCh <- frame:
 		default:
 			log.Println("recv dropped frame")
 		}
