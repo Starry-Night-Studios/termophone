@@ -64,7 +64,9 @@ func (p *Pipeline) Run(ctx context.Context) {
 			ref16 := unsafe.Slice((*int16)(unsafe.Pointer(&refBuf[0])), len(refBuf)/2)
 
 			// Process echo cancellation
-			clean16 := p.aec.Process(mic16, ref16)
+			aecOut := p.aec.Process(mic16, ref16)
+			clean16 := make([]int16, len(aecOut))
+			copy(clean16, aecOut)
 
 			// Fast silence check and Denoise step wrapped into one
 			if isSilent := p.denoiser.Process(clean16); isSilent {
