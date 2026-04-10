@@ -30,7 +30,7 @@ func (d *DenoiseState) Process(pcm []int16) bool {
 
 	isSilent := true
 	for _, s := range pcm {
-		if s != 0 {
+		if s > 8 || s < -8 {
 			isSilent = false
 			break
 		}

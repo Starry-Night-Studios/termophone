@@ -32,10 +32,15 @@ func NewPipeline(rawCh <-chan []byte, sendCh chan<- []byte, rb *RingBuffer, aecD
 		panic(err)
 	}
 
+	codec, err := NewCodec()
+	if err != nil {
+		panic(err)
+	}
+
 	return &Pipeline{
 		rawCh:    rawCh,
 		sendCh:   sendCh,
-		codec:    NewCodec(),
+		codec:    codec,
 		aec:      echoCanceller,
 		denoiser: NewDenoiseState(),
 		rb:       rb,
@@ -62,12 +67,13 @@ func (p *Pipeline) Run(ctx context.Context) {
 	}
 
 	// Create a queue to hold our delayed reference frames
-	refDelayLine := make([][]int16, 0, delayFrames)
+	refRing := make([][]int16, delayFrames)
 
 	// Pre-fill the delay line with digital silence (zeros)
-	for i := 0; i < delayFrames; i++ {
-		refDelayLine = append(refDelayLine, make([]int16, FrameSamples))
+	for i := range refRing {
+		refRing[i] = make([]int16, FrameSamples)
 	}
+	refHead := 0
 	// ----------------------------------------------
 
 	for {
@@ -82,41 +88,17 @@ func (p *Pipeline) Run(ctx context.Context) {
 			mic16 := unsafe.Slice((*int16)(unsafe.Pointer(&frame[0])), len(frame)/2)
 			ref16 := unsafe.Slice((*int16)(unsafe.Pointer(&refBuf[0])), len(refBuf)/2)
 
-			// --- Delay Line Processing ---
-			// Make a copy of the current reference frame to store in our history
-			currentRefCopy := make([]int16, len(ref16))
-			copy(currentRefCopy, ref16)
+			// Store latest reference frame in the circular buffer
+			copy(refRing[refHead], ref16)
 
-			// Push the newest reference audio into the queue
-			refDelayLine = append(refDelayLine, currentRefCopy)
+			// Extract the legitimately delayed frame from the back of the queue
+			delayedRef16 := refRing[(refHead+1)%delayFrames]
+			refHead = (refHead + 1) % delayFrames
 
-			// Pop the oldest reference audio out of the queue (this is what played `aecDelay` ms ago!)
-			delayedRef16 := refDelayLine[0]
-			refDelayLine = refDelayLine[1:]
-			// ----------------------------------
-
-			// --- VAD-Gated AEC (Double-Talk Bypass) ---
-			// Check if the remote peer actually spoke. If the speaker buffer is basically silence,
-			// there is no echo to cancel, so we bypass AEC to prevent voice corruption!
-			var refEnergy int64
-			for _, sample := range delayedRef16 {
-				if sample < 0 {
-					refEnergy -= int64(sample)
-				} else {
-					refEnergy += int64(sample)
-				}
-			}
-
-			var clean16 []int16
-			// Average amplitude of ~50 (out of 32768) across 480 samples = 24000.
-			if refEnergy > 24000 {
-				// Process echo cancellation with properly delayed reference
-				clean16 = p.aec.Process(mic16, delayedRef16)
-			} else {
-				// Remote peer is silent. Pass through local mic freely!
-				clean16 = make([]int16, len(mic16))
-				copy(clean16, mic16)
-			}
+			// Process echo cancellation
+			aecOut := p.aec.Process(mic16, delayedRef16)
+			clean16 := make([]int16, len(aecOut))
+			copy(clean16, aecOut)
 
 			// Fast silence check and Denoise step wrapped into one
 			if isSilent := p.denoiser.Process(clean16); isSilent {
@@ -212,7 +194,9 @@ func RecvPipeline(recvCh <-chan []byte, rb *RingBuffer, codec *Codec) {
 				rb.DropToTarget(targetFill)
 			}
 
-			rb.Write(decodedFrame)
+			if !rb.Write(decodedFrame) {
+				log.Println("Audio receive ring buffer full, dropped frame!")
+			}
 
 		case <-gapTicker.C:
 			// Network Gap detected! The other side is lagging or a packet dropped.
@@ -222,7 +206,9 @@ func RecvPipeline(recvCh <-chan []byte, rb *RingBuffer, codec *Codec) {
 			// using WSOLA pitch-sync against the last known good frame.
 			plcFrame := codec.Decode([]byte{})
 			if plcFrame != nil {
-				rb.Write(plcFrame)
+				if !rb.Write(plcFrame) {
+					log.Println("Audio receive ring buffer full, dropped PLC frame!")
+				}
 			}
 
 		case <-logTicker.C:

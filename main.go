@@ -74,6 +74,7 @@ func main() {
 	muted := &atomic.Bool{}
 
 	startAudio := func(stream network.Stream) {
+		callCtx, callCancel := context.WithCancel(ctx)
 		rawCh := make(chan []byte, 8)
 		sendCh := make(chan []byte, 8)
 		recvCh := make(chan []byte, 16)
@@ -87,8 +88,25 @@ func main() {
 		}
 
 		var disconnectOnce sync.Once
+		var mctx *malgo.AllocatedContext
+		var capturer *audio.Capturer
+		var player *audio.Player
+
 		notifyDisconnected := func() {
 			disconnectOnce.Do(func() {
+				callCancel()
+				if capturer != nil {
+					capturer.Stop()
+					capturer.Uninit()
+				}
+				if player != nil {
+					player.Stop()
+					player.Uninit()
+				}
+				if mctx != nil {
+					mctx.Free()
+					mctx = nil
+				}
 				select {
 				case disconnCh <- ui.MsgPeerDisconnected{}:
 				default:
@@ -96,27 +114,68 @@ func main() {
 			})
 		}
 
-		mctx, _ := malgo.InitContext(nil, malgo.ContextConfig{}, func(msg string) {
+		var err error
+		mctx, err = malgo.InitContext(nil, malgo.ContextConfig{}, func(msg string) {
 			log.Print(msg)
 		})
+		if err != nil {
+			log.Printf("Failed to initialize audio context: %v", err)
+			return
+		}
 
 		rb := audio.NewRingBuffer(1024 * 64)
-		capturer, _ := audio.NewCapturer(mctx, rawCh, freePool)
-		player, _ := audio.NewPlayer(mctx, rb)
 
-		go audio.NewPipeline(rawCh, sendCh, rb, cfg.AECTrimOffsetMs, freePool).Run(ctx)
-		go audio.RecvPipeline(recvCh, rb, audio.NewCodec())
+		capturer, err = audio.NewCapturer(mctx, rawCh, freePool)
+		if err != nil {
+			log.Printf("Failed to initialize capturer: %v", err)
+			notifyDisconnected()
+			return
+		}
+		player, err = audio.NewPlayer(mctx, rb)
+		if err != nil {
+			log.Printf("Failed to initialize player: %v", err)
+			notifyDisconnected()
+			return
+		}
 
-		capturer.Start()
-		player.Start()
+		codec, err := audio.NewCodec()
+		if err != nil {
+			log.Printf("Failed to initialize codec: %v", err)
+			notifyDisconnected()
+			return
+		}
+
+		// Hardcoded aecDelay parameter, or fetch from config
+		aecDelayMs := 60
+
+		go audio.NewPipeline(rawCh, sendCh, rb, aecDelayMs, freePool).Run(callCtx)
+		go audio.RecvPipeline(recvCh, rb, codec)
+
+		if err := capturer.Start(); err != nil {
+			log.Printf("Failed to start capturer: %v", err)
+			notifyDisconnected()
+			return
+		}
+		if err := player.Start(); err != nil {
+			log.Printf("Failed to start player: %v", err)
+			notifyDisconnected()
+			return
+		}
 
 		go func() {
-			for b := range sendCh {
-				if !muted.Load() {
-					filteredSendCh <- b
+			for {
+				select {
+				case <-callCtx.Done():
+					return
+				case b, ok := <-sendCh:
+					if !ok {
+						return
+					}
+					if !muted.Load() {
+						filteredSendCh <- b
+					}
 				}
 			}
-			close(filteredSendCh)
 		}()
 		go func() {
 			vnet.Writer(stream, filteredSendCh)
@@ -127,14 +186,13 @@ func main() {
 			notifyDisconnected()
 		}()
 
-		// Optional minimal heartbeat for UI if needed natively, or removed completely.
 		go func() {
 			// Throttle to 1 FPS for basic UI state updates (duration timer, etc)
 			ticker := time.NewTicker(time.Second)
 			defer ticker.Stop()
 			for range ticker.C {
 				select {
-				case <-ctx.Done():
+				case <-callCtx.Done():
 					return
 				case audioCh <- ui.MsgAudioLevel{Local: 1.0, Peer: 1.0}: // Minimal ping
 				default:
@@ -153,8 +211,6 @@ func main() {
 		}
 
 		connectCh <- ui.MsgPeerConnected{Name: remoteNamed, ID: stream.Conn().RemotePeer().String()}
-		// Auto-save connected peers to phone book so they appear properly!
-		go config.SaveContact(config.Contact{Name: remoteNamed, PeerID: stream.Conn().RemotePeer().String()})
 
 		log.Printf("Audio transmission started!")
 	}

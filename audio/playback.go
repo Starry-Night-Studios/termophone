@@ -116,6 +116,9 @@ func NewPlayer(ctx *malgo.AllocatedContext, rb *RingBuffer) (*Player, error) {
 	cfg.Playback.Format = malgo.FormatS16
 	cfg.Playback.Channels = Channels
 	cfg.SampleRate = SampleRate
+	cfg.Wasapi.NoAutoConvertSRC = 1
+	cfg.Wasapi.NoDefaultQualitySRC = 1
+	cfg.Wasapi.NoAutoStreamRouting = 1
 	cfg.Alsa.NoMMap = 1
 
 	callbacks := malgo.DeviceCallbacks{

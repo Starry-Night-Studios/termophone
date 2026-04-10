@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"fmt"
 	"log"
 	"unsafe"
 
@@ -14,15 +15,15 @@ type Codec struct {
 	decBuf  []int16
 }
 
-func NewCodec() *Codec {
+func NewCodec() (*Codec, error) {
 	enc, err := opus.NewEncoder(SampleRate, Channels, opus.AppVoIP)
 	if err != nil {
-		log.Fatalf("failed to create opus encoder: %v", err)
+		return nil, fmt.Errorf("failed to create opus encoder: %v", err)
 	}
 
 	dec, err := opus.NewDecoder(SampleRate, Channels)
 	if err != nil {
-		log.Fatalf("failed to create opus decoder: %v", err)
+		return nil, fmt.Errorf("failed to create opus decoder: %v", err)
 	}
 
 	return &Codec{
@@ -30,7 +31,7 @@ func NewCodec() *Codec {
 		decoder: dec,
 		encBuf:  make([]byte, 1000),
 		decBuf:  make([]int16, 5760),
-	}
+	}, nil
 }
 
 // Encode compresses raw PCM data to Opus an payload
@@ -44,9 +45,7 @@ func (c *Codec) Encode(pcm []byte) []byte {
 		return nil
 	}
 
-	out := make([]byte, n)
-	copy(out, c.encBuf[:n])
-	return out
+	return c.encBuf[:n]
 }
 
 // Decode decompresses an Opus payload back to raw PCM data
@@ -59,9 +58,5 @@ func (c *Codec) Decode(data []byte) []byte {
 
 	// Cast decoded []int16 back to []byte to push back onto the audio ring buffer
 	byteLen := n * 2 // n is frames, 2 bytes per int16 sample
-	out := make([]byte, byteLen)
-	decBytes := unsafe.Slice((*byte)(unsafe.Pointer(&c.decBuf[0])), byteLen)
-
-	copy(out, decBytes)
-	return out
+	return unsafe.Slice((*byte)(unsafe.Pointer(&c.decBuf[0])), byteLen)
 }
