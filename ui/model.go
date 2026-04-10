@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -20,6 +21,7 @@ const (
 	stateInCall
 	stateIncoming
 	statePostCall
+	stateSettings
 )
 
 type ModelConfig struct {
@@ -69,6 +71,10 @@ type Model struct {
 	debug     bool
 	callStart time.Time
 
+	settingsCursor int
+	usernameInput  textinput.Model
+	colorScheme    int
+
 	logCh     <-chan string
 	audioCh   <-chan MsgAudioLevel
 	statsCh   <-chan MsgStats
@@ -86,32 +92,40 @@ type Model struct {
 }
 
 func NewModel(cfg ModelConfig) Model {
+	appCfg := config.Get()
+	ti := textinput.New()
+	ti.Placeholder = "Enter new username..."
+	ti.SetValue(appCfg.Username)
+	ti.CharLimit = 20
+
 	return Model{
-		state:     stateBrowsing,
-		h:         cfg.Host,
-		peers:     make([]peer.AddrInfo, 0),
-		newPeers:  make([]peer.AddrInfo, 0),
-		contacts:  cfg.Contacts,
-		updateCh:  cfg.PeerCh,
-		streamCh:  cfg.StreamCh,
-		logCh:     cfg.LogCh,
-		audioCh:   cfg.AudioCh,
-		statsCh:   cfg.StatsCh,
-		connectCh: cfg.ConnectCh,
-		disconnCh: cfg.DisconnCh,
-		statusCh:  cfg.StatusCh,
-		muted:     cfg.Muted,
-		logs:      make([]string, 0),
-		dialCb:    cfg.DialCb,
-		acceptCb:  cfg.AcceptCb,
-		saveCb:    cfg.SaveCb,
-		removeCb:  cfg.RemoveCb,
-		debug:     false,
+		state:         stateBrowsing,
+		h:             cfg.Host,
+		peers:         make([]peer.AddrInfo, 0),
+		newPeers:      make([]peer.AddrInfo, 0),
+		contacts:      cfg.Contacts,
+		updateCh:      cfg.PeerCh,
+		streamCh:      cfg.StreamCh,
+		logCh:         cfg.LogCh,
+		audioCh:       cfg.AudioCh,
+		statsCh:       cfg.StatsCh,
+		connectCh:     cfg.ConnectCh,
+		disconnCh:     cfg.DisconnCh,
+		statusCh:      cfg.StatusCh,
+		muted:         cfg.Muted,
+		logs:          make([]string, 0),
+		dialCb:        cfg.DialCb,
+		acceptCb:      cfg.AcceptCb,
+		saveCb:        cfg.SaveCb,
+		removeCb:      cfg.RemoveCb,
+		debug:         false,
+		usernameInput: ti,
+		colorScheme:   appCfg.ColorScheme,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(tickCmd())
+	return tea.Batch(textinput.Blink, tickCmd())
 }
 
 func (m Model) peerDisplayName(id peer.ID) string {
@@ -193,6 +207,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.state == stateBrowsing {
 			switch msg.String() {
+			case "s", "S":
+				m.state = stateSettings
+				m.usernameInput.Focus()
+				m.settingsCursor = 0
 			case "r", "R":
 				m.peers = nil
 				m.newPeers = nil
@@ -241,7 +259,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if selectedName == "" {
 							selectedName = selectedID
 						}
-						m.statusMsg = "Dialing " + selectedName + "..."
+						m.statusMsg = "Connecting to " + selectedName + "..."
 						if m.dialCb != nil {
 							go m.dialCb(selectedID)
 						}
@@ -264,7 +282,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.incomingStream.Reset()
 					m.incomingStream = nil
 				}
-				m.statusMsg = "Call declined"
+				m.statusMsg = "Connection declined"
 				m.state = stateBrowsing
 			}
 		} else if m.state == statePostCall {
@@ -288,6 +306,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateBrowsing
 			} else {
 				m.state = stateBrowsing
+			}
+		} else if m.state == stateSettings {
+			switch msg.String() {
+			case "esc":
+				m.state = stateBrowsing
+			case "up":
+				m.settingsCursor = 0
+			case "down":
+				m.settingsCursor = 1
+			case "left":
+				if m.settingsCursor == 1 {
+					m.colorScheme = (m.colorScheme - 1 + len(themes)) % len(themes)
+				}
+			case "right":
+				if m.settingsCursor == 1 {
+					m.colorScheme = (m.colorScheme + 1) % len(themes)
+				}
+			case "enter":
+				cfg := config.Get()
+				cfg.Username = m.usernameInput.Value()
+				cfg.ColorScheme = m.colorScheme
+				config.SaveConfig() // we will add this func
+				m.state = stateBrowsing
+			}
+
+			if m.state == stateSettings { // if we haven't exited
+				if m.settingsCursor == 0 {
+					m.usernameInput.Focus()
+				} else {
+					m.usernameInput.Blur()
+				}
 			}
 		}
 
@@ -373,6 +422,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.WindowWidth = msg.Width
 		m.WindowHeight = msg.Height
+	}
+
+	if m.state == stateSettings {
+		var cmd tea.Cmd
+		m.usernameInput, cmd = m.usernameInput.Update(msg)
+		cmds = append(cmds, cmd)
 	}
 
 	return m, tea.Batch(cmds...)

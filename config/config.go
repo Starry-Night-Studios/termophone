@@ -16,6 +16,7 @@ type Config struct {
 	Username        string    `json:"username"`
 	Contacts        []Contact `json:"contacts"`
 	AECTrimOffsetMs int       `json:"aec_trim_offset_ms"`
+	ColorScheme     int       `json:"color_scheme"`
 }
 
 var (
@@ -43,6 +44,7 @@ func Get() *Config {
 		Username:        "Anon",
 		Contacts:        []Contact{},
 		AECTrimOffsetMs: 120, // Default hardware delay offset
+		ColorScheme:     0,
 	}
 	file, err := os.Open(path)
 	if err == nil {
@@ -97,4 +99,12 @@ func RemoveContact(peerID string) {
 
 	current.Contacts = filtered
 	writeToDisk(current)
+}
+
+func SaveConfig() {
+	mu.Lock()
+	defer mu.Unlock()
+	if current != nil {
+		writeToDisk(current)
+	}
 }
