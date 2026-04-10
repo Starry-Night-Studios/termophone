@@ -67,12 +67,13 @@ func (p *Pipeline) Run(ctx context.Context) {
 	}
 
 	// Create a queue to hold our delayed reference frames
-	refDelayLine := make([][]int16, 0, delayFrames)
+	refRing := make([][]int16, delayFrames)
 
 	// Pre-fill the delay line with digital silence (zeros)
-	for i := 0; i < delayFrames; i++ {
-		refDelayLine = append(refDelayLine, make([]int16, FrameSamples))
+	for i := range refRing {
+		refRing[i] = make([]int16, FrameSamples)
 	}
+	refHead := 0
 	// ----------------------------------------------
 
 	for {
@@ -87,8 +88,15 @@ func (p *Pipeline) Run(ctx context.Context) {
 			mic16 := unsafe.Slice((*int16)(unsafe.Pointer(&frame[0])), len(frame)/2)
 			ref16 := unsafe.Slice((*int16)(unsafe.Pointer(&refBuf[0])), len(refBuf)/2)
 
+			// Store latest reference frame in the circular buffer
+			copy(refRing[refHead], ref16)
+
+			// Extract the legitimately delayed frame from the back of the queue
+			delayedRef16 := refRing[(refHead+1)%delayFrames]
+			refHead = (refHead + 1) % delayFrames
+
 			// Process echo cancellation
-			aecOut := p.aec.Process(mic16, ref16)
+			aecOut := p.aec.Process(mic16, delayedRef16)
 			clean16 := make([]int16, len(aecOut))
 			copy(clean16, aecOut)
 
@@ -186,7 +194,9 @@ func RecvPipeline(recvCh <-chan []byte, rb *RingBuffer, codec *Codec) {
 				rb.DropToTarget(targetFill)
 			}
 
-			rb.Write(decodedFrame)
+			if !rb.Write(decodedFrame) {
+				log.Println("Audio receive ring buffer full, dropped frame!")
+			}
 
 		case <-gapTicker.C:
 			// Network Gap detected! The other side is lagging or a packet dropped.
@@ -196,7 +206,9 @@ func RecvPipeline(recvCh <-chan []byte, rb *RingBuffer, codec *Codec) {
 			// using WSOLA pitch-sync against the last known good frame.
 			plcFrame := codec.Decode([]byte{})
 			if plcFrame != nil {
-				rb.Write(plcFrame)
+				if !rb.Write(plcFrame) {
+					log.Println("Audio receive ring buffer full, dropped PLC frame!")
+				}
 			}
 
 		case <-logTicker.C:

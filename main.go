@@ -124,7 +124,8 @@ func main() {
 		}
 
 		rb := audio.NewRingBuffer(1024 * 64)
-		capturer, err = audio.NewCapturer(mctx, rawCh)
+
+		capturer, err = audio.NewCapturer(mctx, rawCh, freePool)
 		if err != nil {
 			log.Printf("Failed to initialize capturer: %v", err)
 			notifyDisconnected()
@@ -144,7 +145,10 @@ func main() {
 			return
 		}
 
-		go audio.NewPipeline(rawCh, sendCh, rb).Run(callCtx)
+		// Hardcoded aecDelay parameter, or fetch from config
+		aecDelayMs := 60
+
+		go audio.NewPipeline(rawCh, sendCh, rb, aecDelayMs, freePool).Run(callCtx)
 		go audio.RecvPipeline(recvCh, rb, codec)
 
 		if err := capturer.Start(); err != nil {
