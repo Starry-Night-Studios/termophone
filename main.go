@@ -67,8 +67,24 @@ func main() {
 		recvCh := make(chan []byte, 16)
 		filteredSendCh := make(chan []byte, 8)
 		var disconnectOnce sync.Once
+		var mctx *malgo.AllocatedContext
+		var capturer *audio.Capturer
+		var player *audio.Player
+
 		notifyDisconnected := func() {
 			disconnectOnce.Do(func() {
+				if capturer != nil {
+					capturer.Stop()
+					capturer.Uninit()
+				}
+				if player != nil {
+					player.Stop()
+					player.Uninit()
+				}
+				if mctx != nil {
+					mctx.Free()
+					mctx = nil
+				}
 				select {
 				case disconnCh <- ui.MsgPeerDisconnected{}:
 				default:
@@ -76,13 +92,13 @@ func main() {
 			})
 		}
 
-		mctx, _ := malgo.InitContext(nil, malgo.ContextConfig{}, func(msg string) {
+		mctx, _ = malgo.InitContext(nil, malgo.ContextConfig{}, func(msg string) {
 			log.Print(msg)
 		})
 
 		rb := audio.NewRingBuffer(1024 * 64)
-		capturer, _ := audio.NewCapturer(mctx, rawCh)
-		player, _ := audio.NewPlayer(mctx, rb)
+		capturer, _ = audio.NewCapturer(mctx, rawCh)
+		player, _ = audio.NewPlayer(mctx, rb)
 
 		go audio.NewPipeline(rawCh, sendCh, rb).Run(ctx)
 		go audio.RecvPipeline(recvCh, rb, audio.NewCodec())
