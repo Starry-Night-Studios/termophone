@@ -5,18 +5,15 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
-	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
-	"termophone/audio"
 	"termophone/config"
 	vnet "termophone/net"
+	"termophone/session"
 	"termophone/ui"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/gen2brain/malgo"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 )
@@ -72,152 +69,34 @@ func main() {
 	disconnCh := make(chan ui.MsgPeerDisconnected, 2)
 	statusCh := make(chan string, 5)
 	muted := &atomic.Bool{}
-
-	startAudio := func(stream network.Stream) {
-		callCtx, callCancel := context.WithCancel(ctx)
-		rawCh := make(chan []byte, 8)
-		sendCh := make(chan []byte, 8)
-		recvCh := make(chan []byte, 16)
-		filteredSendCh := make(chan []byte, 8)
-
-		// Pre-allocated Zero-Allocation audio capture free-list!
-		// 32 frames of buffers allows plenty of headroom for the pipeline.
-		freePool := make(chan []byte, 32)
-		for i := 0; i < 32; i++ {
-			freePool <- make([]byte, audio.FrameBytes)
-		}
-
-		var disconnectOnce sync.Once
-		var mctx *malgo.AllocatedContext
-		var capturer *audio.Capturer
-		var player *audio.Player
-
-		notifyDisconnected := func() {
-			disconnectOnce.Do(func() {
-				callCancel()
-				if capturer != nil {
-					capturer.Stop()
-					capturer.Uninit()
-				}
-				if player != nil {
-					player.Stop()
-					player.Uninit()
-				}
-				if mctx != nil {
-					mctx.Free()
-					mctx = nil
-				}
-				select {
-				case disconnCh <- ui.MsgPeerDisconnected{}:
-				default:
-				}
-			})
-		}
-
-		var err error
-		mctx, err = malgo.InitContext(nil, malgo.ContextConfig{}, func(msg string) {
-			log.Print(msg)
-		})
-		if err != nil {
-			log.Printf("Failed to initialize audio context: %v", err)
-			return
-		}
-
-		rb := audio.NewRingBuffer(1024 * 64)
-
-		capturer, err = audio.NewCapturer(mctx, rawCh, freePool)
-		if err != nil {
-			log.Printf("Failed to initialize capturer: %v", err)
-			notifyDisconnected()
-			return
-		}
-		player, err = audio.NewPlayer(mctx, rb)
-		if err != nil {
-			log.Printf("Failed to initialize player: %v", err)
-			notifyDisconnected()
-			return
-		}
-
-		codec, err := audio.NewCodec()
-		if err != nil {
-			log.Printf("Failed to initialize codec: %v", err)
-			notifyDisconnected()
-			return
-		}
-
-		// Fetch aecDelay parameter from config
-		aecDelayMs := config.Get().AECTrimOffsetMs
-
-		go audio.NewPipeline(rawCh, sendCh, rb, aecDelayMs, freePool).Run(callCtx)
-		go audio.RecvPipeline(recvCh, rb, codec)
-
-		if err := capturer.Start(); err != nil {
-			log.Printf("Failed to start capturer: %v", err)
-			notifyDisconnected()
-			return
-		}
-		if err := player.Start(); err != nil {
-			log.Printf("Failed to start player: %v", err)
-			notifyDisconnected()
-			return
-		}
-
-		go func() {
-			for {
-				select {
-				case <-callCtx.Done():
-					return
-				case b, ok := <-sendCh:
-					if !ok {
-						return
-					}
-					if !muted.Load() {
-						select {
-						case filteredSendCh <- b:
-						default:
-							// drop frame while muted/backpressured
-						}
-					}
-				}
-			}
-		}()
-		go func() {
-			vnet.Writer(stream, filteredSendCh)
-			notifyDisconnected()
-		}()
-		go func() {
-			vnet.Reader(stream, recvCh)
-			notifyDisconnected()
-		}()
-
-		go func() {
-			// Throttle to 1 FPS for basic UI state updates (duration timer, etc)
-			ticker := time.NewTicker(time.Second)
-			defer ticker.Stop()
-			for range ticker.C {
-				select {
-				case <-callCtx.Done():
-					return
-				case audioCh <- ui.MsgAudioLevel{Local: 1.0, Peer: 1.0}: // Minimal ping
-				default:
-				}
-			}
-		}()
-
-		remoteNamed := stream.Conn().RemotePeer().String()
-		agent, err := h.Peerstore().Get(stream.Conn().RemotePeer(), "AgentVersion")
-		if err == nil && agent != nil {
-			if str, ok := agent.(string); ok && strings.HasPrefix(str, "termophone/") {
-				remoteNamed = strings.TrimPrefix(str, "termophone/")
-			}
-		} else if len(remoteNamed) > 12 {
-			remoteNamed = remoteNamed[len(remoteNamed)-8:]
-		}
-
-		connectCh <- ui.MsgPeerConnected{Name: remoteNamed, ID: stream.Conn().RemotePeer().String()}
-
-		log.Printf("Audio transmission started!")
+	stateSvc, err := vnet.NewStateService(ctx, h, cfg.Username, muted)
+	if err != nil {
+		log.Fatal("Failed to initialize state service:", err)
 	}
+	defer stateSvc.Close()
+
+	audioSession, err := session.NewAudioMeshSession(
+		ctx,
+		h,
+		muted,
+		func(id, name string) {
+			select {
+			case connectCh <- ui.MsgPeerConnected{Name: name, ID: id}:
+			default:
+			}
+		},
+		func() {
+			select {
+			case disconnCh <- ui.MsgPeerDisconnected{}:
+			default:
+			}
+		},
+		config.Get().AECTrimOffsetMs,
+	)
+	if err != nil {
+		log.Fatal("Failed to initialize audio session:", err)
+	}
+	defer audioSession.Close()
 
 	dialCb := func(id string) error {
 		log.Printf("Dialing %s...", id)
@@ -263,13 +142,13 @@ func main() {
 			return fmt.Errorf("call declined")
 		}
 
-		go startAudio(stream)
+		audioSession.AddStream(stream)
 		return nil
 	}
 
 	acceptCb := func(stream network.Stream) error {
 		log.Printf("Accepted incoming call from %s", stream.Conn().RemotePeer())
-		startAudio(stream)
+		audioSession.AddStream(stream)
 		return nil
 	}
 

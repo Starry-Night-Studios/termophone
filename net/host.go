@@ -95,14 +95,14 @@ func SetupHost(ctx context.Context, listenPort int, username string) (host.Host,
 		return nil, nil, nil, nil, fmt.Errorf("failed to create DHT: %v", err)
 	}
 
-	streamCh := make(chan network.Stream, 1)
+	streamCh := make(chan network.Stream, 16)
 
 	h.SetStreamHandler(ProtocolID, func(s network.Stream) {
 		log.Printf("Incoming audio connection from: %s", s.Conn().RemotePeer())
 		select {
 		case streamCh <- s:
 		default:
-			log.Println("Incoming audio stream dropped (already connected to a peer)")
+			log.Println("Incoming audio stream dropped (queue full)")
 			s.Reset()
 		}
 	})

@@ -62,7 +62,11 @@ func (m Model) renderSidebar() string {
 	b.WriteString(st.Title.Render("TERMOPHONE") + "\n\n")
 
 	if m.state == stateInCall {
-		b.WriteString(fmt.Sprintf(" CONNECTED:\n  %s\n", st.Info.Render(m.peerName)))
+		peers := m.activePeerNames()
+		b.WriteString(fmt.Sprintf(" CONNECTED (%d):\n", len(peers)))
+		for _, p := range peers {
+			b.WriteString(fmt.Sprintf("  %s\n", st.Info.Render(p)))
+		}
 		b.WriteString(st.Dim.Render("\n  Navigation disabled\n  during active session."))
 		return b.String()
 	}
@@ -163,7 +167,7 @@ func (m Model) renderMainPane() string {
 	case stateInCall:
 		elapsed := time.Since(m.callStart).Round(time.Second)
 		durStr := fmt.Sprintf("%02d:%02d:%02d", int(elapsed.Hours()), int(elapsed.Minutes())%60, int(elapsed.Seconds())%60)
-		header := fmt.Sprintf(" CONNECTED: %s", m.peerName)
+		header := fmt.Sprintf(" CONNECTED: %d peers", len(m.activePeerNames()))
 		b.WriteString("\n" + st.Title.Render(header) + "\n\n")
 
 		muteStatus := st.Online.Render("LIVE")
@@ -173,13 +177,23 @@ func (m Model) renderMainPane() string {
 
 		b.WriteString(fmt.Sprintf("      Duration : %s\n", st.Info.Render(durStr)))
 		b.WriteString(fmt.Sprintf("      Mic      : %s\n", muteStatus))
+		b.WriteString("      Peers    : ")
+		peerNames := m.activePeerNames()
+		if len(peerNames) == 0 {
+			b.WriteString(st.Dim.Render("(none)") + "\n")
+		} else {
+			b.WriteString("\n")
+			for _, p := range peerNames {
+				b.WriteString(fmt.Sprintf("         - %s\n", st.Info.Render(p)))
+			}
+		}
 
 		videoStatus := st.Dim.Render("OFF")
 		if m.sharingScreen {
 			videoStatus = st.Online.Render("SHARING")
 		}
 		b.WriteString(fmt.Sprintf("      Video    : %s (H264/480p)\n", videoStatus))
-		b.WriteString(fmt.Sprintf("      Codec    : Opus (48kHz)\n\n"))
+		b.WriteString("      Codec    : Opus (48kHz)\n\n")
 		b.WriteString(st.Dim.Render("      Controls : [M] mute/unmute   [V] screen share") + "\n\n")
 
 		b.WriteString(st.Title.Render(" STATS ") + "\n")

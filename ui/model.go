@@ -56,6 +56,8 @@ type Model struct {
 	streamCh       <-chan network.Stream
 	incomingStream network.Stream
 	selected       *peer.AddrInfo
+	activePeers    map[string]string
+	activePeerIDs  []string
 
 	peerName     string
 	peerID       string
@@ -108,6 +110,8 @@ func NewModel(cfg ModelConfig) Model {
 		h:             cfg.Host,
 		peers:         make([]peer.AddrInfo, 0),
 		newPeers:      make([]peer.AddrInfo, 0),
+		activePeers:   make(map[string]string),
+		activePeerIDs: make([]string, 0),
 		contacts:      cfg.Contacts,
 		updateCh:      cfg.PeerCh,
 		streamCh:      cfg.StreamCh,
@@ -192,6 +196,42 @@ func (m Model) isOnline(peerID string) bool {
 		}
 	}
 	return false
+}
+
+func (m *Model) addActivePeer(id, name string) {
+	if id == "" {
+		return
+	}
+	if name == "" {
+		name = id
+	}
+	if _, ok := m.activePeers[id]; ok {
+		m.activePeers[id] = name
+		return
+	}
+	m.activePeers[id] = name
+	m.activePeerIDs = append(m.activePeerIDs, id)
+	if m.peerID == "" {
+		m.peerID = id
+		m.peerName = name
+	}
+}
+
+func (m *Model) clearActivePeers() {
+	m.activePeers = make(map[string]string)
+	m.activePeerIDs = m.activePeerIDs[:0]
+	m.peerID = ""
+	m.peerName = ""
+}
+
+func (m Model) activePeerNames() []string {
+	peers := make([]string, 0, len(m.activePeerIDs))
+	for _, id := range m.activePeerIDs {
+		if name, ok := m.activePeers[id]; ok {
+			peers = append(peers, name)
+		}
+	}
+	return peers
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -409,10 +449,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		for _, c := range drain(m.connectCh) {
-			m.peerName = c.Name
-			m.peerID = c.ID
+			m.addActivePeer(c.ID, c.Name)
 			m.state = stateInCall
-			m.callStart = time.Now()
+			if m.callStart.IsZero() {
+				m.callStart = time.Now()
+			}
 			m.statusMsg = ""
 		}
 
@@ -431,23 +472,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.sharingScreen = false
 			}
 
+			savedPeerID := m.peerID
+			savedPeerName := m.peerName
 			isContact := false
 			for _, c := range m.contacts {
-				if c.PeerID == m.peerID {
+				if c.PeerID == savedPeerID {
 					isContact = true
 					break
 				}
 			}
 
-			if !isContact && m.peerID != "" {
-				m.lastPeerID = m.peerID
-				m.lastPeerName = m.peerName
+			if !isContact && savedPeerID != "" {
+				m.lastPeerID = savedPeerID
+				m.lastPeerName = savedPeerName
 				m.state = statePostCall
 			} else {
 				m.state = stateBrowsing
 			}
-			m.peerName = ""
-			m.peerID = ""
+			m.clearActivePeers()
+			m.callStart = time.Time{}
 			m.incomingStream = nil
 			m.selected = nil
 		}
