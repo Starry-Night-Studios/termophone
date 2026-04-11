@@ -6,6 +6,7 @@ import (
 	"log"
 	"os/exec"
 	"runtime"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -24,6 +25,7 @@ func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID) error {
 	if runtime.GOOS == "darwin" {
 		cmd = exec.CommandContext(ctx, "ffmpeg",
 			"-f", "avfoundation", "-i", "1:none",
+			"-show_cursor", "1",
 			"-r", "30",
 			"-vf", "scale=-1:480",
 			"-c:v", "libx264",
@@ -106,11 +108,24 @@ func ReceiveScreenShare(ctx context.Context, s network.Stream) error {
 
 	go func() {
 		defer s.Close()
-		defer cmd.Process.Kill()
 		if _, err := io.Copy(stdin, s); err != nil {
 			log.Printf("Screen share viewing stopped: %v", err)
 		}
-		cmd.Wait()
+		// Close stdin to signal EOF to mpv
+		stdin.Close()
+		// Wait for process to exit gracefully, then force kill if needed
+		done := make(chan error, 1)
+		go func() {
+			done <- cmd.Wait()
+		}()
+		select {
+		case <-done:
+			// Process exited cleanly
+		case <-time.After(2 * time.Second):
+			// Force kill if still running after 2 seconds
+			cmd.Process.Kill()
+			<-done
+		}
 	}()
 
 	return nil
