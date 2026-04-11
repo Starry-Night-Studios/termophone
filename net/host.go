@@ -15,6 +15,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/host/peerstore/pstoreds"
 	libp2pquic "github.com/libp2p/go-libp2p/p2p/transport/quic"
 )
@@ -79,11 +80,16 @@ func SetupHost(ctx context.Context, listenPort int, username string) (host.Host,
 		libp2p.ListenAddrStrings(
 			fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", listenPort),
 			fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", listenPort),
+			fmt.Sprintf("/ip6/::/udp/%d/quic-v1", listenPort),
+			fmt.Sprintf("/ip6/::/tcp/%d", listenPort),
 		),
 		libp2p.Transport(libp2pquic.NewTransport),
 		libp2p.UserAgent("termophone/"+username),
 		libp2p.Identity(priv),
 		libp2p.Peerstore(ps),
+		libp2p.EnableNATService(),
+		libp2p.EnableHolePunching(),
+		libp2p.NATPortMap(),
 	)
 	if err != nil {
 		return nil, nil, nil, nil, err
@@ -93,6 +99,24 @@ func SetupHost(ctx context.Context, listenPort int, username string) (host.Host,
 	kadDHT, err := dht.New(ctx, h, dht.Mode(dht.ModeClient))
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("failed to create DHT: %v", err)
+	}
+
+	// Bootstrap the DHT to enable peer discovery across NAT
+	if err := kadDHT.Bootstrap(ctx); err != nil {
+		log.Printf("DHT bootstrap error (non-fatal): %v", err)
+	}
+
+	// Connect to bootstrap peers for initial peer discovery
+	for _, addr := range dht.DefaultBootstrapPeers {
+		pi, err := peer.AddrInfoFromP2pAddr(addr)
+		if err != nil {
+			continue
+		}
+		go func(peerInfo peer.AddrInfo) {
+			if err := h.Connect(ctx, peerInfo); err == nil {
+				log.Printf("Connected to bootstrap peer %s", peerInfo.ID)
+			}
+		}(*pi)
 	}
 
 	streamCh := make(chan network.Stream, 1)
