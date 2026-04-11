@@ -220,7 +220,6 @@ func (m Model) renderLogs(maxLines int, maxWidth int) string {
 	if maxWidth < 8 {
 		maxWidth = 8
 	}
-	st := m.getStyles()
 	b := strings.Builder{}
 	start := 0
 	if len(m.logs) > maxLines {
@@ -230,13 +229,15 @@ func (m Model) renderLogs(maxLines int, maxWidth int) string {
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
+	prefixStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#D0B000")).Bold(true)
+	lineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#9AA4B2"))
 	for i := start; i < len(m.logs); i++ {
 		line := m.logs[i]
 		runes := []rune(line)
 		if len(runes) > contentWidth {
 			line = string(runes[:contentWidth])
 		}
-		b.WriteString(st.Log.Render("  > " + line))
+		b.WriteString(prefixStyle.Render("  > ") + lineStyle.Render(line))
 		if i < len(m.logs)-1 {
 			b.WriteString("\n")
 		}
@@ -311,8 +312,9 @@ func (m Model) View() string {
 
 	// Create a responsive footer that aligns the IO text to the right
 	footerWidth := lipgloss.Width(full)
-	keysRendered := st.Help.Render(keysStr)
-	ioRendered := st.Help.Render(ioStr)
+	footerStyle := st.Info.Copy().Bold(true)
+	keysRendered := footerStyle.Render(keysStr)
+	ioRendered := footerStyle.Render(ioStr)
 
 	padLen := footerWidth - lipgloss.Width(keysRendered) - lipgloss.Width(ioRendered)
 	if padLen < 0 {
