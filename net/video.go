@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"log"
-	"os"
 	"os/exec"
 	"runtime"
 	"time"
@@ -16,7 +15,24 @@ import (
 
 const VideoProtocolID = "/termophone/screen/1.0.0"
 
-func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID) error {
+type Quality struct {
+	Name    string
+	Scale   string
+	Bitrate string
+}
+
+var Qualities = map[string]Quality{
+	"low":    {"Low", "scale=-1:480", "500k"},
+	"medium": {"Medium", "scale=-1:720", "1500k"},
+	"high":   {"High", "scale=-1:1080", "4000k"},
+}
+
+func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID, quality string) error {
+	if _, ok := Qualities[quality]; !ok {
+		quality = "medium" // default to medium if invalid
+	}
+	q := Qualities[quality]
+
 	s, err := h.NewStream(ctx, peerID, VideoProtocolID)
 	if err != nil {
 		return err
@@ -31,12 +47,12 @@ func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID) error {
 			"-pixel_format", "uyvy422",
 			"-i", "1:none",
 			"-r", "30",
-			"-vf", "scale=-1:480",
+			"-g", "30",
+			"-vf", q.Scale,
 			"-c:v", "libx264",
 			"-preset", "ultrafast",
 			"-tune", "zerolatency",
-			"-g", "30",
-			"-b:v", "1500k",
+			"-b:v", q.Bitrate,
 			"-f", "mpegts",
 			"pipe:1",
 		)
@@ -44,12 +60,12 @@ func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID) error {
 		cmd = exec.CommandContext(ctx, "ffmpeg",
 			"-f", "gdigrab", "-i", "desktop",
 			"-r", "30",
-			"-vf", "scale=-1:480",
+			"-g", "30",
+			"-vf", q.Scale,
 			"-c:v", "libx264",
 			"-preset", "ultrafast",
 			"-tune", "zerolatency",
-			"-g", "30",
-			"-b:v", "1500k",
+			"-b:v", q.Bitrate,
 			"-f", "mpegts",
 			"pipe:1",
 		)
@@ -57,12 +73,12 @@ func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID) error {
 		cmd = exec.CommandContext(ctx, "ffmpeg",
 			"-f", "x11grab", "-i", ":0.0",
 			"-r", "30",
-			"-vf", "scale=-1:480",
+			"-g", "30",
+			"-vf", q.Scale,
 			"-c:v", "libx264",
 			"-preset", "ultrafast",
 			"-tune", "zerolatency",
-			"-g", "30",
-			"-b:v", "1500k",
+			"-b:v", q.Bitrate,
 			"-f", "mpegts",
 			"pipe:1",
 		)
@@ -73,9 +89,6 @@ func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID) error {
 		s.Reset()
 		return err
 	}
-
-	// Capture ffmpeg stderr for debugging
-	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
 		s.Reset()

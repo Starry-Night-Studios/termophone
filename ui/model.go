@@ -221,7 +221,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.cancelScreen = cancel
 					m.sharingScreen = true
 					go func() {
-						vnet.StartScreenShare(ctx, m.h, targetID)
+						vnet.StartScreenShare(ctx, m.h, targetID, "medium")
 					}()
 				}
 			}
