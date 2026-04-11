@@ -104,6 +104,18 @@ func (rb *RingBuffer) DropToTarget(target int) {
 	}
 }
 
+// Reset flushes all buffered audio and re-enables prebuffering.
+// Call this when a new peer connection starts so stale audio from
+// a previous session (or runaway PLC frames) doesn't pollute the
+// fresh stream.
+func (rb *RingBuffer) Reset() {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+	rb.r = 0
+	rb.w = 0
+	rb.prebuffering = true
+}
+
 type Player struct {
 	rb     *RingBuffer
 	device *malgo.Device

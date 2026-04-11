@@ -30,6 +30,7 @@ func Writer(stream network.Stream, sendCh <-chan []byte) {
 // Reader pulls binary from the p2p stream and pushes Opus frames to the receive pipeline
 func Reader(stream network.Stream, recvCh chan<- []byte) {
 	defer stream.Close()
+	defer close(recvCh)
 	header := make([]byte, 6) // length (4) + seq (2)
 
 	// Pre-allocate a large buffer to avoid per-frame allocations
