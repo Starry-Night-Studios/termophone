@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log"
+	"os"
 	"os/exec"
 	"runtime"
 	"time"
@@ -24,8 +25,11 @@ func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID) error {
 	var cmd *exec.Cmd
 	if runtime.GOOS == "darwin" {
 		cmd = exec.CommandContext(ctx, "ffmpeg",
-			"-f", "avfoundation", "-i", "1:none",
-			"-show_cursor", "1",
+			"-f", "avfoundation",
+			"-capture_cursor", "1",
+			"-capture_mouse_clicks", "1",
+			"-pixel_format", "uyvy422",
+			"-i", "1:none",
 			"-r", "30",
 			"-vf", "scale=-1:480",
 			"-c:v", "libx264",
@@ -69,6 +73,9 @@ func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID) error {
 		s.Reset()
 		return err
 	}
+
+	// Capture ffmpeg stderr for debugging
+	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
 		s.Reset()
