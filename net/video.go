@@ -27,9 +27,9 @@ type Quality struct {
 }
 
 var Qualities = map[string]Quality{
-	"low":    {"Low", "scale=-1:480", "500k"},
-	"medium": {"Medium", "scale=-1:720", "1500k"},
-	"high":   {"High", "scale=-1:1080", "4000k"},
+	"low":    {"Low", "scale=-2:480", "500k"},
+	"medium": {"Medium", "scale=-2:720", "1500k"},
+	"high":   {"High", "scale=-2:1080", "4000k"},
 }
 
 func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID, quality string) error {
@@ -50,6 +50,8 @@ func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID, quality 
 			"-capture_cursor", "1",
 			"-capture_mouse_clicks", "1",
 			"-pixel_format", "uyvy422",
+			"-framerate", "30",
+			"-video_size", "1920x1200",
 			"-i", "1:none",
 			"-r", "30",
 			"-vf", q.Scale,
