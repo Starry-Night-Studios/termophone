@@ -109,7 +109,9 @@ func SetupHost(ctx context.Context, listenPort int, username string) (host.Host,
 
 	h.SetStreamHandler(VideoProtocolID, func(s network.Stream) {
 		log.Printf("Incoming screen share connection from: %s", s.Conn().RemotePeer())
-		ReceiveScreenShare(ctx, s)
+		if err := ReceiveScreenShare(ctx, s); err != nil {
+			log.Printf("ReceiveScreenShare error: %v", err)
+		}
 	})
 
 	log.Printf("libp2p Host Started! ID: %s", h.ID())

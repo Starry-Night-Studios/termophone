@@ -30,7 +30,8 @@ func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID) error {
 			"-preset", "ultrafast",
 			"-tune", "zerolatency",
 			"-g", "30",
-			"-f", "h264",
+			"-b:v", "1500k",
+			"-f", "mpegts",
 			"pipe:1",
 		)
 	} else if runtime.GOOS == "windows" {
@@ -42,7 +43,8 @@ func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID) error {
 			"-preset", "ultrafast",
 			"-tune", "zerolatency",
 			"-g", "30",
-			"-f", "h264",
+			"-b:v", "1500k",
+			"-f", "mpegts",
 			"pipe:1",
 		)
 	} else {
@@ -54,7 +56,8 @@ func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID) error {
 			"-preset", "ultrafast",
 			"-tune", "zerolatency",
 			"-g", "30",
-			"-f", "h264",
+			"-b:v", "1500k",
+			"-f", "mpegts",
 			"pipe:1",
 		)
 	}
@@ -87,7 +90,6 @@ func ReceiveScreenShare(ctx context.Context, s network.Stream) error {
 		"--no-cache",
 		"--untimed",
 		"--profile=low-latency",
-		"--demuxer=h264",
 		"-",
 	)
 
