@@ -17,6 +17,7 @@ type Config struct {
 	Contacts        []Contact `json:"contacts"`
 	AECTrimOffsetMs int       `json:"aec_trim_offset_ms"`
 	ColorScheme     int       `json:"color_scheme"`
+	ScreenQuality   string    `json:"screen_quality"`
 }
 
 var (
@@ -45,6 +46,7 @@ func Get() *Config {
 		Contacts:        []Contact{},
 		AECTrimOffsetMs: 120, // Default hardware delay offset
 		ColorScheme:     0,
+		ScreenQuality:   "medium",
 	}
 	file, err := os.Open(path)
 	if err == nil {

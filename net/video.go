@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log"
+	"os"
 	"os/exec"
 	"runtime"
 	"time"
@@ -14,6 +15,10 @@ import (
 )
 
 const VideoProtocolID = "/termophone/screen/1.0.0"
+
+// Temporary debugging toggle for ffmpeg stderr.
+// Remove this once screen-share stability is fully verified.
+const debugFFmpeg = false
 
 type Quality struct {
 	Name    string
@@ -47,11 +52,11 @@ func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID, quality 
 			"-pixel_format", "uyvy422",
 			"-i", "1:none",
 			"-r", "30",
-			"-g", "30",
 			"-vf", q.Scale,
 			"-c:v", "libx264",
 			"-preset", "ultrafast",
 			"-tune", "zerolatency",
+			"-g", "30",
 			"-b:v", q.Bitrate,
 			"-f", "mpegts",
 			"pipe:1",
@@ -60,11 +65,11 @@ func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID, quality 
 		cmd = exec.CommandContext(ctx, "ffmpeg",
 			"-f", "gdigrab", "-i", "desktop",
 			"-r", "30",
-			"-g", "30",
 			"-vf", q.Scale,
 			"-c:v", "libx264",
 			"-preset", "ultrafast",
 			"-tune", "zerolatency",
+			"-g", "30",
 			"-b:v", q.Bitrate,
 			"-f", "mpegts",
 			"pipe:1",
@@ -73,11 +78,11 @@ func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID, quality 
 		cmd = exec.CommandContext(ctx, "ffmpeg",
 			"-f", "x11grab", "-i", ":0.0",
 			"-r", "30",
-			"-g", "30",
 			"-vf", q.Scale,
 			"-c:v", "libx264",
 			"-preset", "ultrafast",
 			"-tune", "zerolatency",
+			"-g", "30",
 			"-b:v", q.Bitrate,
 			"-f", "mpegts",
 			"pipe:1",
@@ -88,6 +93,10 @@ func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID, quality 
 	if err != nil {
 		s.Reset()
 		return err
+	}
+
+	if debugFFmpeg {
+		cmd.Stderr = os.Stderr
 	}
 
 	if err := cmd.Start(); err != nil {

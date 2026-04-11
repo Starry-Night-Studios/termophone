@@ -132,9 +132,17 @@ func (m Model) renderMainPane() string {
 		if m.colorScheme >= 0 && m.colorScheme < len(themeNames) {
 			scm = themeNames[m.colorScheme]
 		}
+		qualityLabel := "Medium"
+		switch m.screenQuality {
+		case "low":
+			qualityLabel = "Low"
+		case "high":
+			qualityLabel = "High"
+		}
 
 		usrStr := fmt.Sprintf("Username : %s", m.usernameInput.View())
 		colStr := fmt.Sprintf("Theme    : < %s >", scm)
+		qStr := fmt.Sprintf("Quality  : < %s >", qualityLabel)
 
 		// Create a specific selection style for settings
 		settingsSelected := st.Selected.Copy().Width(40).PaddingLeft(6)
@@ -142,12 +150,18 @@ func (m Model) renderMainPane() string {
 		if m.settingsCursor == 0 {
 			b.WriteString(settingsSelected.Render(usrStr) + "\n\n")
 			b.WriteString("      " + colStr + "\n\n")
-		} else {
+			b.WriteString("      " + qStr + "\n\n")
+		} else if m.settingsCursor == 1 {
 			b.WriteString("      " + usrStr + "\n\n")
 			b.WriteString(settingsSelected.Render(colStr) + "\n\n")
+			b.WriteString("      " + qStr + "\n\n")
+		} else {
+			b.WriteString("      " + usrStr + "\n\n")
+			b.WriteString("      " + colStr + "\n\n")
+			b.WriteString(settingsSelected.Render(qStr) + "\n\n")
 		}
 
-		b.WriteString("\n      [Esc] cancel   [Enter] save\n")
+		b.WriteString("\n      [Esc] cancel   [Enter] save\n      [Left/Right] change value\n")
 
 	case stateBrowsing:
 		b.WriteString("\n      Not connected.\n\n      Select a peer and press\n      [Enter] to connect.\n")
@@ -178,8 +192,15 @@ func (m Model) renderMainPane() string {
 		if m.sharingScreen {
 			videoStatus = st.Online.Render("SHARING")
 		}
-		b.WriteString(fmt.Sprintf("      Video    : %s (H264/480p)\n", videoStatus))
-		b.WriteString(fmt.Sprintf("      Codec    : Opus (48kHz)\n\n"))
+		qualityLabel := "Medium"
+		switch m.screenQuality {
+		case "low":
+			qualityLabel = "Low"
+		case "high":
+			qualityLabel = "High"
+		}
+		b.WriteString(fmt.Sprintf("      Video    : %s (%s)\n", videoStatus, qualityLabel))
+		b.WriteString("      Codec    : Opus (48kHz)\n\n")
 		b.WriteString(st.Dim.Render("      Controls : [M] mute/unmute   [V] screen share") + "\n\n")
 
 		b.WriteString(st.Title.Render(" STATS ") + "\n")

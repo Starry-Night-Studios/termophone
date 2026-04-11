@@ -79,6 +79,7 @@ type Model struct {
 	settingsCursor int
 	usernameInput  textinput.Model
 	colorScheme    int
+	screenQuality  string
 
 	logCh     <-chan string
 	audioCh   <-chan MsgAudioLevel
@@ -126,6 +127,7 @@ func NewModel(cfg ModelConfig) Model {
 		debug:         false,
 		usernameInput: ti,
 		colorScheme:   appCfg.ColorScheme,
+		screenQuality: appCfg.ScreenQuality,
 	}
 }
 
@@ -221,7 +223,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.cancelScreen = cancel
 					m.sharingScreen = true
 					go func() {
-						vnet.StartScreenShare(ctx, m.h, targetID, "medium")
+						vnet.StartScreenShare(ctx, m.h, targetID, m.screenQuality)
 					}()
 				}
 			}
@@ -337,21 +339,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc":
 				m.state = stateBrowsing
 			case "up":
-				m.settingsCursor = 0
+				if m.settingsCursor > 0 {
+					m.settingsCursor--
+				}
 			case "down":
-				m.settingsCursor = 1
+				if m.settingsCursor < 2 {
+					m.settingsCursor++
+				}
 			case "left":
 				if m.settingsCursor == 1 {
 					m.colorScheme = (m.colorScheme - 1 + len(themes)) % len(themes)
+				} else if m.settingsCursor == 2 {
+					m.screenQuality = previousQuality(m.screenQuality)
 				}
 			case "right":
 				if m.settingsCursor == 1 {
 					m.colorScheme = (m.colorScheme + 1) % len(themes)
+				} else if m.settingsCursor == 2 {
+					m.screenQuality = nextQuality(m.screenQuality)
 				}
 			case "enter":
 				cfg := config.Get()
 				cfg.Username = m.usernameInput.Value()
 				cfg.ColorScheme = m.colorScheme
+				cfg.ScreenQuality = m.screenQuality
 				config.SaveConfig() // we will add this func
 				m.state = stateBrowsing
 			}
@@ -466,3 +477,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 func (m Model) Cursor() int { return m.cursor }
+
+func previousQuality(current string) string {
+	switch current {
+	case "high":
+		return "medium"
+	case "medium":
+		return "low"
+	default:
+		return "high"
+	}
+}
+
+func nextQuality(current string) string {
+	switch current {
+	case "low":
+		return "medium"
+	case "medium":
+		return "high"
+	default:
+		return "low"
+	}
+}
