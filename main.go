@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
+	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,6 +36,17 @@ func (cw chanWriter) Write(p []byte) (int, error) {
 }
 
 func main() {
+	f, _ := os.Create("termophone-log.txt")
+	log.SetOutput(io.MultiWriter(os.Stderr, f))
+
+	defer func() {
+		if r := recover(); r != nil {
+			log.SetOutput(io.MultiWriter(os.Stderr, f)) // ensure it goes to file
+			log.Printf("PANIC: %v", r)
+			log.Printf("%s", debug.Stack())
+		}
+	}()
+
 	logCh := make(chan string, 32)
 	cw := chanWriter(logCh)
 
