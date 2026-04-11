@@ -305,6 +305,9 @@ func (m Model) View() string {
 		keysStr = "  [D] debug  [Q] quit"
 	}
 	ioStr := "System Default  "
+	if m.h != nil {
+		ioStr = fmt.Sprintf("Peer ID: %s  ", m.h.ID().String())
+	}
 
 	// Create a responsive footer that aligns the IO text to the right
 	footerWidth := lipgloss.Width(full)
