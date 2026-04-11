@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"log"
-	"os"
 	"os/exec"
 	"runtime"
 	"time"
@@ -65,7 +64,6 @@ func ReceiveScreenShare(ctx context.Context, s network.Stream) error {
 			"avdec_h264", "!",
 			"autovideosink", "sync=false",
 		)
-		cmd.Stderr = os.Stderr
 	}
 
 	stdin, err := cmd.StdinPipe()
