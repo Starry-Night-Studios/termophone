@@ -18,6 +18,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/host/peerstore/pstoreds"
 	libp2pquic "github.com/libp2p/go-libp2p/p2p/transport/quic"
+	"github.com/multiformats/go-multiaddr"
 )
 
 const ProtocolID = "/termophone/audio/1.0.0"
@@ -76,6 +77,15 @@ func SetupHost(ctx context.Context, listenPort int, username string) (host.Host,
 		return nil, nil, nil, nil, fmt.Errorf("failed to create persistent peerstore: %v", err)
 	}
 
+	relayMA, err := multiaddr.NewMultiaddr("/ip4/104.208.79.140/tcp/4001/p2p/12D3KooWDPEAcg1S6EjA5FJdrWMHBUD7LX2nFw7fbAJuHbmvMZkp")
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("failed to parse relay address: %v", err)
+	}
+	relayInfo, err := peer.AddrInfoFromP2pAddr(relayMA)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("failed to parse relay info: %v", err)
+	}
+
 	h, err := libp2p.New(
 		libp2p.ListenAddrStrings(
 			fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", listenPort),
@@ -90,6 +100,7 @@ func SetupHost(ctx context.Context, listenPort int, username string) (host.Host,
 		libp2p.EnableNATService(),
 		libp2p.EnableHolePunching(),
 		libp2p.NATPortMap(),
+		libp2p.EnableAutoRelayWithStaticRelays([]peer.AddrInfo{*relayInfo}),
 	)
 	if err != nil {
 		return nil, nil, nil, nil, err
