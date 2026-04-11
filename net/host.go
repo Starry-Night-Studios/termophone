@@ -8,15 +8,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/ipfs/go-datastore"
-	badger "github.com/ipfs/go-ds-badger"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/p2p/host/peerstore/pstoreds"
 	libp2pquic "github.com/libp2p/go-libp2p/p2p/transport/quic"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -24,66 +21,53 @@ import (
 const ProtocolID = "/termophone/audio/1.0.0"
 const ControlProtocolID = "/termophone/control/1.0.0"
 
-func getIdentityAndStore(ctx context.Context) (crypto.PrivKey, datastore.Batching, error) {
+func getIdentity() (crypto.PrivKey, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	baseDir := filepath.Join(home, ".termophone")
 	os.MkdirAll(baseDir, 0755)
 
-	// 1. Identity Key
 	keyPath := filepath.Join(baseDir, "identity.key")
-	var priv crypto.PrivKey
 
 	if keyBytes, err := os.ReadFile(keyPath); err == nil {
-		priv, err = crypto.UnmarshalPrivateKey(keyBytes)
+		priv, err := crypto.UnmarshalPrivateKey(keyBytes)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to unmarshal key: %v", err)
+			return nil, fmt.Errorf("failed to unmarshal key: %v", err)
 		}
-	} else {
-		priv, _, err = crypto.GenerateEd25519Key(rand.Reader)
-		if err != nil {
-			return nil, nil, err
-		}
-		keyBytes, err := crypto.MarshalPrivateKey(priv)
-		if err != nil {
-			return nil, nil, err
-		}
-		if err := os.WriteFile(keyPath, keyBytes, 0600); err != nil {
-			return nil, nil, err
-		}
+		return priv, nil
 	}
 
-	// 2. Peerstore Datastore (Badger)
-	storePath := filepath.Join(baseDir, "store")
-	ds, err := badger.NewDatastore(storePath, nil)
+	priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to open badger datastore: %v", err)
+		return nil, err
 	}
-
-	return priv, ds, nil
+	keyBytes, err := crypto.MarshalPrivateKey(priv)
+	if err != nil {
+		return nil, err
+	}
+	return priv, os.WriteFile(keyPath, keyBytes, 0600)
 }
 
 // SetupHost creates a new libp2p host, loads identity, attaches peerstore, and runs Kad DHT.
-func SetupHost(ctx context.Context, listenPort int, username string) (host.Host, *dht.IpfsDHT, datastore.Batching, <-chan network.Stream, error) {
-	priv, ds, err := getIdentityAndStore(ctx)
+func SetupHost(ctx context.Context, listenPort int, username string) (host.Host, *dht.IpfsDHT, <-chan network.Stream, error) {
+	priv, err := getIdentity()
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to initialize identity/store: %v", err)
+		return nil, nil, nil, fmt.Errorf("failed to initialize identity: %v", err)
 	}
 
-	ps, err := pstoreds.NewPeerstore(ctx, ds, pstoreds.DefaultOpts())
-	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to create persistent peerstore: %v", err)
-	}
-
-	relayMA, err := multiaddr.NewMultiaddr("/ip4/104.208.79.140/tcp/4001/p2p/12D3KooWDPEAcg1S6EjA5FJdrWMHBUD7LX2nFw7fbAJuHbmvMZkp")
-	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to parse relay address: %v", err)
-	}
-	relayInfo, err := peer.AddrInfoFromP2pAddr(relayMA)
-	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to parse relay info: %v", err)
+	var staticRelays []peer.AddrInfo
+	for _, addr := range DefaultRelayAddrs {
+		ma, err := multiaddr.NewMultiaddr(addr)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to parse relay address %s: %v", addr, err)
+		}
+		info, err := peer.AddrInfoFromP2pAddr(ma)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to parse relay info from %s: %v", addr, err)
+		}
+		staticRelays = append(staticRelays, *info)
 	}
 
 	h, err := libp2p.New(
@@ -96,20 +80,19 @@ func SetupHost(ctx context.Context, listenPort int, username string) (host.Host,
 		libp2p.Transport(libp2pquic.NewTransport),
 		libp2p.UserAgent("termophone/"+username),
 		libp2p.Identity(priv),
-		libp2p.Peerstore(ps),
 		libp2p.EnableNATService(),
 		libp2p.EnableHolePunching(),
 		libp2p.NATPortMap(),
-		libp2p.EnableAutoRelayWithStaticRelays([]peer.AddrInfo{*relayInfo}),
+		libp2p.EnableAutoRelayWithStaticRelays(staticRelays),
 	)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	// Setup Kademlia DHT in client mode to avoid unnecessary WAN traffic
 	kadDHT, err := dht.New(ctx, h, dht.Mode(dht.ModeClient))
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to create DHT: %v", err)
+		return nil, nil, nil, fmt.Errorf("failed to create DHT: %v", err)
 	}
 
 	// Bootstrap the DHT to enable peer discovery across NAT
@@ -154,5 +137,5 @@ func SetupHost(ctx context.Context, listenPort int, username string) (host.Host,
 		log.Printf("  %s/p2p/%s", addr, h.ID())
 	}
 
-	return h, kadDHT, ds, streamCh, nil
+	return h, kadDHT, streamCh, nil
 }

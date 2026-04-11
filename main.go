@@ -52,11 +52,10 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	h, kadDHT, ds, incomingStreamCh, err := vnet.SetupHost(ctx, 0, cfg.Username)
+	h, kadDHT, incomingStreamCh, err := vnet.SetupHost(ctx, 0, cfg.Username)
 	if err != nil {
 		log.Fatal("Failed to setup libp2p host:", err)
 	}
-	defer ds.Close()
 	defer kadDHT.Close()
 	defer h.Close()
 	defer cancel()
