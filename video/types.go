@@ -5,7 +5,7 @@ const ProtocolID = "/termophone/screen/1.0.0"
 var h264StartCode = []byte{0, 0, 0, 1}
 
 // Temporary debugging toggle for ffmpeg stderr.
-const debugFFmpeg = false
+const debugFFmpeg = true
 
 type Quality struct {
 	Name    string

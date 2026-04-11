@@ -1,6 +1,7 @@
 package video
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"time"
 )
 
 func buildFFmpegForShare(ctx context.Context, q Quality) (*exec.Cmd, io.ReadCloser, error) {
@@ -25,7 +27,6 @@ func buildFFmpegForShare(ctx context.Context, q Quality) (*exec.Cmd, io.ReadClos
 			"-c:v", "h264_videotoolbox",
 			"-realtime", "1",
 			"-allow_sw", "0",
-			"-intra-refresh", "1",
 			"-g", "30",
 			"-maxrate", q.Bitrate,
 			"-bufsize", q.Bitrate,
@@ -47,7 +48,10 @@ func buildFFmpegForShare(ctx context.Context, q Quality) (*exec.Cmd, io.ReadClos
 
 	if runtime.GOOS == "windows" {
 		baseArgs := []string{
-			"-f", "gdigrab", "-i", "desktop",
+			"-f", "gdigrab",
+			"-framerate", "30",
+			"-draw_mouse", "1",
+			"-i", "desktop",
 			"-r", "30",
 			"-vf", q.Scale,
 		}
@@ -103,10 +107,10 @@ func buildFFmpegForShare(ctx context.Context, q Quality) (*exec.Cmd, io.ReadClos
 					"-c:v", "libx264",
 					"-preset", "ultrafast",
 					"-tune", "zerolatency",
-					"-intra-refresh", "1",
-					"-g", "30",
+					"-b:v", q.Bitrate,
 					"-maxrate", q.Bitrate,
 					"-bufsize", q.Bitrate,
+					"-g", "30",
 					"-f", "h264",
 					"pipe:1",
 				},
@@ -122,6 +126,9 @@ func buildFFmpegForShare(ctx context.Context, q Quality) (*exec.Cmd, io.ReadClos
 			attempt := exec.CommandContext(ctx, "ffmpeg", args...)
 			if debugFFmpeg {
 				attempt.Stderr = os.Stderr
+			} else {
+				// Always capture stderr so we can detect init failures
+				attempt.Stderr = os.Stderr
 			}
 
 			out, err := attempt.StdoutPipe()
@@ -132,12 +139,41 @@ func buildFFmpegForShare(ctx context.Context, q Quality) (*exec.Cmd, io.ReadClos
 
 			if err := attempt.Start(); err != nil {
 				lastErr = err
-				log.Printf("video encoder %s unavailable, trying fallback: %v", profile.name, err)
+				log.Printf("video encoder %s unavailable: %v", profile.name, err)
 				continue
 			}
 
+			// Actually verify encoder produces output — read first byte with timeout
+			firstByte := make([]byte, 1)
+			readDone := make(chan error, 1)
+			go func() {
+				_, err := io.ReadFull(out, firstByte)
+				readDone <- err
+			}()
+
+			timer := time.NewTimer(3 * time.Second)
+			select {
+			case err := <-readDone:
+				timer.Stop()
+				if err != nil {
+					attempt.Process.Kill()
+					attempt.Wait()
+					log.Printf("video encoder %s produced no output, trying fallback", profile.name)
+					lastErr = err
+					continue
+				}
+			case <-timer.C:
+				attempt.Process.Kill()
+				attempt.Wait()
+				log.Printf("video encoder %s timed out, trying fallback", profile.name)
+				lastErr = errors.New("encoder timeout")
+				continue
+			}
+
+			// Encoder works — stitch the first byte back into the reader
 			log.Printf("video encoder selected: %s", profile.name)
-			return attempt, out, nil
+			stitched := io.MultiReader(bytes.NewReader(firstByte), out)
+			return attempt, io.NopCloser(stitched), nil
 		}
 
 		if lastErr == nil {
