@@ -164,7 +164,14 @@ func (m Model) renderMainPane() string {
 		b.WriteString("\n      [Esc] cancel   [Enter] save\n      [Left/Right] change value\n")
 
 	case stateBrowsing:
-		b.WriteString("\n      Not connected.\n\n      Select a peer and press\n      [Enter] to connect.\n")
+		b.WriteString("\n      Not connected.\n")
+		if m.manualDialMode {
+			b.WriteString("\n      Paste peer ID and press [Enter]:\n\n")
+			b.WriteString("      " + m.peerIDInput.View() + "\n")
+			b.WriteString(st.Dim.Render("\n      [Enter] connect   [Esc] cancel\n"))
+		} else {
+			b.WriteString("\n      Select a peer and press\n      [Enter] to connect, or [P] to paste ID.\n")
+		}
 		if m.statusMsg != "" {
 			b.WriteString(fmt.Sprintf("\n      %s\n", st.Info.Render(m.statusMsg)))
 		}
@@ -300,9 +307,11 @@ func (m Model) View() string {
 	split := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
 	full := st.Border.Render(split)
 
-	keysStr := "  [up/down] navigate  [Enter] connect  [S] settings  [R] reload  [X] remove  [Q] quit"
+	keysStr := "  [up/down] navigate  [Enter] connect  [P] paste id  [S] settings  [R] reload  [X] remove  [Q] quit"
 	if m.state == stateInCall {
 		keysStr = "  [D] debug  [Q] quit"
+	} else if m.state == stateBrowsing && m.manualDialMode {
+		keysStr = "  [Paste] peer id  [Enter] connect  [Esc] cancel  [Q] quit"
 	}
 	ioStr := "System Default  "
 
