@@ -164,6 +164,10 @@ func RecvPipeline(recvCh <-chan []byte, rb *RingBuffer, codec *Codec) {
 			// Sequence tracking
 			seq := binary.LittleEndian.Uint16(frame[0:2])
 			payload := frame[2:]
+			if len(payload) == 0 {
+				// Empty Opus packet can happen with malformed frames; skip quietly.
+				continue
+			}
 
 			if hasSeq {
 				diff := int16(seq - maxSeq)
@@ -202,9 +206,8 @@ func RecvPipeline(recvCh <-chan []byte, rb *RingBuffer, codec *Codec) {
 			// Network Gap detected! The other side is lagging or a packet dropped.
 			// Trigger Opus Packet Loss Concealment (PLC)
 
-			// Passing an empty slice directly synthesizes 10ms of extrapolated audio
-			// using WSOLA pitch-sync against the last known good frame.
-			plcFrame := codec.Decode([]byte{})
+			// Synthesize 10ms extrapolated audio from the decoder state.
+			plcFrame := codec.DecodePLC()
 			if plcFrame != nil {
 				if !rb.Write(plcFrame) {
 					log.Println("Audio receive ring buffer full, dropped PLC frame!")

@@ -3,6 +3,7 @@ package audio
 import (
 	"fmt"
 	"log"
+	"time"
 	"unsafe"
 
 	"github.com/hraban/opus"
@@ -13,6 +14,11 @@ type Codec struct {
 	decoder *opus.Decoder
 	encBuf  []byte
 	decBuf  []int16
+
+	decodeErrSuppressed int
+	lastDecodeErrLog    time.Time
+	plcErrSuppressed    int
+	lastPLCErrLog       time.Time
 }
 
 func NewCodec() (*Codec, error) {
@@ -50,13 +56,52 @@ func (c *Codec) Encode(pcm []byte) []byte {
 
 // Decode decompresses an Opus payload back to raw PCM data
 func (c *Codec) Decode(data []byte) []byte {
+	if len(data) == 0 {
+		// Empty payload is not valid for Decode; callers should use DecodePLC.
+		return nil
+	}
+
 	n, err := c.decoder.Decode(data, c.decBuf)
 	if err != nil {
-		log.Println("opus decode error:", err)
+		now := time.Now()
+		if c.lastDecodeErrLog.IsZero() || now.Sub(c.lastDecodeErrLog) >= 3*time.Second {
+			if c.decodeErrSuppressed > 0 {
+				log.Printf("opus decode error (non-fatal, payload=%dB): %v (suppressed %d similar errors)", len(data), err, c.decodeErrSuppressed)
+				c.decodeErrSuppressed = 0
+			} else {
+				log.Printf("opus decode error (non-fatal, payload=%dB): %v", len(data), err)
+			}
+			c.lastDecodeErrLog = now
+		} else {
+			c.decodeErrSuppressed++
+		}
 		return nil
 	}
 
 	// Cast decoded []int16 back to []byte to push back onto the audio ring buffer
 	byteLen := n * 2 // n is frames, 2 bytes per int16 sample
+	return unsafe.Slice((*byte)(unsafe.Pointer(&c.decBuf[0])), byteLen)
+}
+
+// DecodePLC synthesizes a frame during packet gaps using Opus packet-loss concealment.
+func (c *Codec) DecodePLC() []byte {
+	err := c.decoder.DecodePLC(c.decBuf)
+	if err != nil {
+		now := time.Now()
+		if c.lastPLCErrLog.IsZero() || now.Sub(c.lastPLCErrLog) >= 3*time.Second {
+			if c.plcErrSuppressed > 0 {
+				log.Printf("opus PLC decode error (non-fatal): %v (suppressed %d similar errors)", err, c.plcErrSuppressed)
+				c.plcErrSuppressed = 0
+			} else {
+				log.Printf("opus PLC decode error (non-fatal): %v", err)
+			}
+			c.lastPLCErrLog = now
+		} else {
+			c.plcErrSuppressed++
+		}
+		return nil
+	}
+
+	byteLen := FrameBytes
 	return unsafe.Slice((*byte)(unsafe.Pointer(&c.decBuf[0])), byteLen)
 }
