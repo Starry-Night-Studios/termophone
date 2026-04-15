@@ -33,9 +33,6 @@ func Reader(stream network.Stream, recvCh chan<- []byte) {
 	defer close(recvCh)
 	header := make([]byte, 6) // length (4) + seq (2)
 
-	// Pre-allocate a large buffer to avoid per-frame allocations
-	bufPool := make([]byte, 1024*1024)
-
 	for {
 		if _, err := io.ReadFull(stream, header); err != nil {
 			if err != io.EOF {
@@ -44,8 +41,8 @@ func Reader(stream network.Stream, recvCh chan<- []byte) {
 			return
 		}
 		length := binary.LittleEndian.Uint32(header[0:4])
-		// seq is extracted but it must be prepended to the payload for RecvPipeline
-		// sequence tracking which expects: [seq: 2 bytes][opus payload]
+
+		// Seq is extracted but must be prepended to the payload for RecvPipeline sequence tracking
 		_ = binary.LittleEndian.Uint16(header[4:6])
 
 		if length == 0 || length > 1024*1024 {
@@ -53,18 +50,17 @@ func Reader(stream network.Stream, recvCh chan<- []byte) {
 			return
 		}
 
-		// Use a slice of the pre-allocated buffer
-		payload := bufPool[:length]
-		if _, err := io.ReadFull(stream, payload); err != nil {
+		// Allocate the exact size needed just once per frame
+		frame := make([]byte, length+2)
+
+		// Put the sequence number at the start
+		copy(frame[0:2], header[4:6])
+
+		// Read the payload DIRECTLY from the stream into the rest of the frame
+		if _, err := io.ReadFull(stream, frame[2:]); err != nil {
 			log.Println("P2P stream payload read error:", err)
 			return
 		}
-
-		// Allocate exact size for the channel including the 2-byte seq header
-		// This avoids overwriting the bufPool during concurrent channel processing
-		frame := make([]byte, length+2)
-		copy(frame[0:2], header[4:6])
-		copy(frame[2:], payload)
 
 		select {
 		case recvCh <- frame:

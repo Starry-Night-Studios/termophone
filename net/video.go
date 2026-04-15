@@ -44,7 +44,8 @@ func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID, quality 
 	}
 
 	var cmd *exec.Cmd
-	if runtime.GOOS == "darwin" {
+	switch runtime.GOOS {
+	case "darwin":
 		cmd = exec.CommandContext(ctx, "ffmpeg",
 			"-f", "avfoundation",
 			"-capture_cursor", "1",
@@ -63,7 +64,7 @@ func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID, quality 
 			"-f", "mpegts",
 			"pipe:1",
 		)
-	} else if runtime.GOOS == "windows" {
+	case "windows":
 		cmd = exec.CommandContext(ctx, "ffmpeg",
 			"-f", "gdigrab", "-i", "desktop",
 			"-r", "30",
@@ -76,7 +77,7 @@ func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID, quality 
 			"-f", "mpegts",
 			"pipe:1",
 		)
-	} else {
+	default:
 		cmd = exec.CommandContext(ctx, "ffmpeg",
 			"-f", "x11grab", "-i", ":0.0",
 			"-r", "30",
@@ -108,10 +109,15 @@ func StartScreenShare(ctx context.Context, h host.Host, peerID peer.ID, quality 
 
 	go func() {
 		defer s.Close()
-		defer cmd.Process.Kill()
+		// Block until the stream closes or errors
 		if _, err := io.Copy(s, stdout); err != nil {
 			log.Printf("Screen share stopped: %v", err)
 		}
+		// The stream is dead. Manually kill FFmpeg BEFORE waiting to prevent zombie processes.
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+		// Now it is safe to wait and reap the process
 		cmd.Wait()
 	}()
 

@@ -59,7 +59,6 @@ func (rb *RingBuffer) Read(p []byte) {
 	}
 
 	if avail < n {
-		// UNDERFLOW! A packet is late due to network jitter.
 		// Output pure silence to avoid waveform cliffs/buzzing.
 		for i := 0; i < n; i++ {
 			p[i] = 0
