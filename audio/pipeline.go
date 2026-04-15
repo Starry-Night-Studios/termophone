@@ -140,11 +140,7 @@ func (p *Pipeline) Run(ctx context.Context) {
 	}
 }
 
-// RecvPipeline sits between network and playback.
-// recvCh → decode → ring buffer
 func RecvPipeline(recvCh <-chan []byte, rb *RingBuffer, codec *Codec) {
-	// Flush any leftover audio from a previous session (e.g. stale PLC frames
-	// that filled the buffer after the last peer disconnected).
 	rb.Reset()
 
 	logTicker := time.NewTicker(time.Second * 2)
@@ -153,17 +149,9 @@ func RecvPipeline(recvCh <-chan []byte, rb *RingBuffer, codec *Codec) {
 	var maxSeq uint16
 	var hasSeq bool
 
-	// Ticker for network gap detection (every 12ms allows 2ms leeway over a 10ms frame rate)
-	gapTicker := time.NewTicker(time.Millisecond * 12)
-	defer gapTicker.Stop()
-
-	// consecutivePLC counts how many PLC frames we have synthesised with no real
-	// packet arriving in between.  After ~300 ms of pure PLC we are almost
-	// certainly disconnected rather than just experiencing packet loss, so we
-	// stop writing to the ring buffer.  The cap prevents the buffer from being
-	// flooded with synthesised silence between calls.
-	const maxConsecutivePLC = 25 // 25 × 12 ms ≈ 300 ms
-	consecutivePLC := 0
+	// 100ms without packets means the sender stopped speaking (silence suppression)
+	talkSpurtTicker := time.NewTicker(time.Millisecond * 100)
+	defer talkSpurtTicker.Stop()
 
 	for {
 		select {
@@ -171,10 +159,7 @@ func RecvPipeline(recvCh <-chan []byte, rb *RingBuffer, codec *Codec) {
 			if !ok {
 				return
 			}
-			// A real packet arrived – reset the PLC backoff counter and the
-			// gap timer so we don't immediately synthesise a PLC frame.
-			consecutivePLC = 0
-			gapTicker.Reset(time.Millisecond * 12)
+			talkSpurtTicker.Reset(time.Millisecond * 100)
 
 			if len(frame) < 2 {
 				continue
@@ -184,18 +169,26 @@ func RecvPipeline(recvCh <-chan []byte, rb *RingBuffer, codec *Codec) {
 			seq := binary.LittleEndian.Uint16(frame[0:2])
 			payload := frame[2:]
 			if len(payload) == 0 {
-				// Empty Opus packet can happen with malformed frames; skip quietly.
 				continue
 			}
 
 			if hasSeq {
 				diff := int16(seq - maxSeq)
-				// Allow a small reorder window (±5 sequence numbers).
-				// Anything significantly older (<-5) in a rapid burst is dropped to shed latency.
+
+				// Stale packet (arrived too late)
 				if diff < -5 && diff > -1000 {
-					// Stale packet (arrived too late), drop it to shed latency
 					continue
 				}
+
+				// SEQUENCE-BASED PLC: Accurately synthesize missing packets
+				if diff > 1 && diff < 10 {
+					for i := int16(0); i < diff-1; i++ {
+						if plcFrame := codec.DecodePLC(); plcFrame != nil {
+							rb.Write(plcFrame)
+						}
+					}
+				}
+
 				if diff > 0 {
 					maxSeq = seq
 				}
@@ -206,7 +199,7 @@ func RecvPipeline(recvCh <-chan []byte, rb *RingBuffer, codec *Codec) {
 
 			framesReceived++
 
-			// Decompress!
+			// Decompress
 			decodedFrame := codec.Decode(payload)
 			if decodedFrame == nil {
 				continue
@@ -221,26 +214,11 @@ func RecvPipeline(recvCh <-chan []byte, rb *RingBuffer, codec *Codec) {
 				log.Println("Audio receive ring buffer full, dropped frame!")
 			}
 
-		case <-gapTicker.C:
-			// Network Gap detected! The other side is lagging or a packet dropped.
-			// Trigger Opus Packet Loss Concealment (PLC)
-
-			consecutivePLC++
-			if consecutivePLC > maxConsecutivePLC {
-				// We have been synthesising frames for ~300 ms with no real
-				// packet.  The peer has almost certainly disconnected.  Stop
-				// filling the buffer so it doesn't overflow with stale audio
-				// that would degrade quality on the next reconnect.
-				continue
-			}
-
-			// Synthesize 10ms extrapolated audio from the decoder state.
-			plcFrame := codec.DecodePLC()
-			if plcFrame != nil {
-				if !rb.Write(plcFrame) {
-					log.Println("Audio receive ring buffer full, dropped PLC frame!")
-				}
-			}
+		case <-talkSpurtTicker.C:
+			// Sender stopped speaking.
+			// Reset the buffer so the NEXT sentence gets properly pre-buffered!
+			rb.Reset()
+			hasSeq = false // Reset sequence tracking for the new talk spurt
 
 		case <-logTicker.C:
 			if framesReceived > 0 {

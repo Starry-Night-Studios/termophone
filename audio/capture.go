@@ -16,11 +16,7 @@ func NewCapturer(ctx *malgo.AllocatedContext, rawCh chan<- []byte, freePool chan
 	cfg.Capture.Channels = Channels
 	cfg.SampleRate = SampleRate
 
-	// Bypasses the Windows Audio Engine (WASAPI) software mixers and enhancements
-	cfg.Wasapi.NoAutoConvertSRC = 1
-	cfg.Wasapi.NoDefaultQualitySRC = 1
-	cfg.Wasapi.NoAutoStreamRouting = 1
-	cfg.Alsa.NoMMap = 1
+	// Removed WASAPI/ALSA flags from capture configuration
 
 	// Pre-allocated fixed-size ring buffer for incoming OS audio data
 	// 100ms capacity (10 frames) is plenty for the capture side
