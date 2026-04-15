@@ -60,8 +60,8 @@ func (p *Pipeline) Run(ctx context.Context) {
 
 	// --- Hardware Latency Delay Line Setup ---
 	// p.aecDelay is config.AECTrimOffsetMs. Since each frame is 10ms, we need delayFrames.
-	// Ensure delayFrames is at least 1 to avoid popping from empty
-	delayFrames := p.aecDelay / 10
+	// Add 1 to ensure the ring buffer size actually creates the requested delay.
+	delayFrames := (p.aecDelay / 10) + 1
 	if delayFrames < 1 {
 		delayFrames = 1
 	}
@@ -97,11 +97,9 @@ func (p *Pipeline) Run(ctx context.Context) {
 
 			// Process echo cancellation
 			aecOut := p.aec.Process(mic16, delayedRef16)
-			clean16 := make([]int16, len(aecOut))
-			copy(clean16, aecOut)
 
-			// Fast silence check and Denoise step wrapped into one
-			if isSilent := p.denoiser.Process(clean16); isSilent {
+			// Pass aecOut directly! No heap allocations.
+			if isSilent := p.denoiser.Process(aecOut); isSilent {
 				silentFrames++
 				// Return the unprocessed buffer to the zero-allocation pool
 				select {
@@ -113,8 +111,8 @@ func (p *Pipeline) Run(ctx context.Context) {
 			}
 
 			// Cast clean []int16 back to []byte
-			byteLen := len(clean16) * 2
-			cleanBytes := unsafe.Slice((*byte)(unsafe.Pointer(&clean16[0])), byteLen)
+			byteLen := len(aecOut) * 2
+			cleanBytes := unsafe.Slice((*byte)(unsafe.Pointer(&aecOut[0])), byteLen)
 
 			// Compress clean audio
 			encodedFrame := p.codec.Encode(cleanBytes)
