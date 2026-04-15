@@ -59,14 +59,16 @@ func (rb *RingBuffer) Read(p []byte) {
 	}
 
 	if avail < n {
-		rb.readAt(p[:avail], rb.r)
-		for i := avail; i < n; i++ {
+		// UNDERFLOW! A packet is late due to network jitter.
+		// Output pure silence to avoid waveform cliffs/buzzing.
+		for i := 0; i < n; i++ {
 			p[i] = 0
 		}
-		rb.r += avail
-		rb.prebuffering = true // Go back to prebuffering on underflow
+		// Do NOT set rb.prebuffering = true here.
+		// We just wait patiently for the late packet to arrive.
 		return
 	}
+
 	rb.readAt(p, rb.r)
 	rb.r += n
 }

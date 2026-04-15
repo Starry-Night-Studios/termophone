@@ -103,6 +103,13 @@ func (p *Pipeline) Run(ctx context.Context) {
 			// Fast silence check and Denoise step wrapped into one
 			if isSilent := p.denoiser.Process(clean16); isSilent {
 				silentFrames++
+				// Return the unprocessed buffer to the zero-allocation pool
+				select {
+				case p.freePool <- frame:
+				default:
+				}
+				// Skip the Opus encoder and network send completely!
+				continue
 			}
 
 			// Cast clean []int16 back to []byte
