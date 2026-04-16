@@ -25,9 +25,7 @@ type remotePeerAudio struct {
 	jitter *audio.JitterBuffer
 	done   chan struct{}
 
-	mu           sync.RWMutex
-	lastFrame    []int16
-	lastPacketAt time.Time
+	mu sync.RWMutex
 
 	closeOnce sync.Once
 }
@@ -206,13 +204,9 @@ func (s *AudioMeshSession) AddStream(stream network.Stream) {
 			}
 			seq := binary.LittleEndian.Uint16(frame[0:2])
 			rp.jitter.Push(seq, frame[2:])
-			rp.mu.Lock()
-			rp.lastPacketAt = time.Now()
-			rp.mu.Unlock()
 		}
 	}()
 
-	go s.peerPlayoutLoop(rp)
 }
 
 func (s *AudioMeshSession) removePeer(pid peer.ID) {
@@ -233,35 +227,6 @@ func (s *AudioMeshSession) removePeer(pid peer.ID) {
 
 	if empty && s.onSessionDisconnected != nil {
 		s.onSessionDisconnected()
-	}
-}
-
-func (s *AudioMeshSession) peerPlayoutLoop(rp *remotePeerAudio) {
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-
-	silence := make([]int16, audio.FrameSamples)
-
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case <-rp.done:
-			return
-		case <-ticker.C:
-			payload, ok := rp.jitter.Pop()
-			frame := silence
-			if ok {
-				decoded := rp.codec.Decode(payload)
-				if decoded != nil {
-					frame = bytesToPCM(decoded)
-				}
-			}
-
-			rp.mu.Lock()
-			rp.lastFrame = frame
-			rp.mu.Unlock()
-		}
 	}
 }
 
@@ -294,13 +259,36 @@ func (s *AudioMeshSession) mixerLoop() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			frames := s.activeFrames(150 * time.Millisecond)
-			if len(frames) == 0 {
+			var activeFrames [][]int16
+
+			// Pull and decode exactly one frame from every active peer
+			for _, rp := range s.peerSnapshot() {
+				payload, ok := rp.jitter.Pop()
+
+				if ok {
+					// Good packet: Decode normally
+					decoded := rp.codec.Decode(payload)
+					if decoded != nil {
+						activeFrames = append(activeFrames, bytesToPCM(decoded))
+					}
+				} else {
+					// Packet lost/late: Pass empty byte slice to trigger Opus PLC
+					plc := rp.codec.Decode([]byte{})
+					if plc != nil {
+						activeFrames = append(activeFrames, bytesToPCM(plc))
+					}
+				}
+			}
+
+			if len(activeFrames) == 0 {
 				continue
 			}
 
-			mixed := audio.MixAudio(frames, audio.FrameSamples)
+			// Mix all decoded frames synchronously
+			mixed := audio.MixAudio(activeFrames, audio.FrameSamples)
 			pcm := pcmToBytes(mixed)
+
+			// Manage hardware ringbuffer drift
 			if s.rb.Fill() > audio.FrameBytes*32 {
 				s.rb.DropToTarget(audio.FrameBytes * 8)
 			}
@@ -320,22 +308,6 @@ func (s *AudioMeshSession) peerSnapshot() []*remotePeerAudio {
 	}
 	s.peersMu.RUnlock()
 	return out
-}
-
-func (s *AudioMeshSession) activeFrames(maxAge time.Duration) [][]int16 {
-	now := time.Now()
-	frames := make([][]int16, 0)
-	for _, rp := range s.peerSnapshot() {
-		rp.mu.RLock()
-		fresh := !rp.lastPacketAt.IsZero() && now.Sub(rp.lastPacketAt) <= maxAge
-		if fresh && len(rp.lastFrame) > 0 {
-			buf := make([]int16, len(rp.lastFrame))
-			copy(buf, rp.lastFrame)
-			frames = append(frames, buf)
-		}
-		rp.mu.RUnlock()
-	}
-	return frames
 }
 
 func (s *AudioMeshSession) displayName(id peer.ID) string {
