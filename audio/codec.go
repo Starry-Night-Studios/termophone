@@ -22,9 +22,27 @@ type Codec struct {
 }
 
 func NewCodec() (*Codec, error) {
+
 	enc, err := opus.NewEncoder(SampleRate, Channels, opus.AppVoIP)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create opus encoder: %v", err)
+	}
+
+	// Set Bitrate to 32kbps
+	if err := enc.SetBitrate(32000); err != nil {
+		log.Printf("opus: failed to set bitrate: %v", err)
+	}
+	// Enable In-Band FEC
+	if err := enc.SetInBandFEC(true); err != nil {
+		log.Printf("opus: failed to enable FEC: %v", err)
+	}
+	// Set expected Packet Loss Percentage to 15
+	if err := enc.SetPacketLossPerc(15); err != nil {
+		log.Printf("opus: failed to set packet loss perc: %v", err)
+	}
+	// Enable DTX
+	if err := enc.SetDTX(true); err != nil {
+		log.Printf("opus: failed to enable DTX: %v", err)
 	}
 
 	dec, err := opus.NewDecoder(SampleRate, Channels)
@@ -51,7 +69,10 @@ func (c *Codec) Encode(pcm []byte) []byte {
 		return nil
 	}
 
-	return c.encBuf[:n]
+	// Return a COPY so the network layer doesn't see its data change mid-send
+	out := make([]byte, n)
+	copy(out, c.encBuf[:n])
+	return out
 }
 
 // Decode decompresses an Opus payload back to raw PCM data
