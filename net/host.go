@@ -9,18 +9,13 @@ import (
 	"path/filepath"
 
 	"github.com/libp2p/go-libp2p"
-	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
-	"github.com/libp2p/go-libp2p/core/peer"
 	libp2pquic "github.com/libp2p/go-libp2p/p2p/transport/quic"
-	"github.com/multiformats/go-multiaddr"
 )
 
-const ProtocolID = "/termophone/audio/1.0.0"
-const ControlProtocolID = "/termophone/control/1.0.0"
-
+// getIdentity remains untouched. This is your global Ed25519 passport.
 func getIdentity() (crypto.PrivKey, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -50,81 +45,31 @@ func getIdentity() (crypto.PrivKey, error) {
 	return priv, os.WriteFile(keyPath, keyBytes, 0600)
 }
 
-// SetupHost creates a new libp2p host, loads identity, attaches peerstore, and runs Kad DHT.
-func SetupHost(ctx context.Context, listenPort int, username string) (host.Host, *dht.IpfsDHT, <-chan network.Stream, error) {
+// SetupHost is now just a barebones local node. 
+// No DHT, no bootstrap nodes, no audio stream handlers.
+// It returns JUST the host and an error to perfectly match main.go.
+func SetupHost(ctx context.Context, listenPort int, username string) (host.Host, error) {
 	priv, err := getIdentity()
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to initialize identity: %v", err)
-	}
-
-	var staticRelays []peer.AddrInfo
-	for _, addr := range DefaultRelayAddrs {
-		ma, err := multiaddr.NewMultiaddr(addr)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to parse relay address %s: %v", addr, err)
-		}
-		info, err := peer.AddrInfoFromP2pAddr(ma)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to parse relay info from %s: %v", addr, err)
-		}
-		staticRelays = append(staticRelays, *info)
+		return nil, fmt.Errorf("failed to initialize identity: %v", err)
 	}
 
 	h, err := libp2p.New(
 		libp2p.ListenAddrStrings(
 			fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", listenPort),
 			fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", listenPort),
-			fmt.Sprintf("/ip6/::/udp/%d/quic-v1", listenPort),
-			fmt.Sprintf("/ip6/::/tcp/%d", listenPort),
 		),
 		libp2p.Transport(libp2pquic.NewTransport),
 		libp2p.UserAgent("termophone/"+username),
 		libp2p.Identity(priv),
 		libp2p.EnableNATService(),
-		libp2p.EnableHolePunching(),
-		libp2p.NATPortMap(),
-		libp2p.EnableAutoRelayWithStaticRelays(staticRelays),
 	)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 
-	// Setup Kademlia DHT in client mode to avoid unnecessary WAN traffic
-	kadDHT, err := dht.New(ctx, h, dht.Mode(dht.ModeClient))
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to create DHT: %v", err)
-	}
-
-	// Bootstrap the DHT to enable peer discovery across NAT
-	if err := kadDHT.Bootstrap(ctx); err != nil {
-		log.Printf("DHT bootstrap error (non-fatal): %v", err)
-	}
-
-	// Connect to bootstrap peers for initial peer discovery
-	for _, addr := range dht.DefaultBootstrapPeers {
-		pi, err := peer.AddrInfoFromP2pAddr(addr)
-		if err != nil {
-			continue
-		}
-		go func(peerInfo peer.AddrInfo) {
-			if err := h.Connect(ctx, peerInfo); err == nil {
-				log.Printf("Connected to bootstrap peer %s", peerInfo.ID)
-			}
-		}(*pi)
-	}
-
-	streamCh := make(chan network.Stream, 1)
-
-	h.SetStreamHandler(ProtocolID, func(s network.Stream) {
-		log.Printf("Incoming audio connection from: %s", s.Conn().RemotePeer())
-		select {
-		case streamCh <- s:
-		default:
-			log.Println("Incoming audio stream dropped (already connected to a peer)")
-			s.Reset()
-		}
-	})
-
+	// We leave the Video handler intact for local screen sharing.
+	// (VideoProtocolID and ReceiveScreenShare are pulled automatically from your video.go)
 	h.SetStreamHandler(VideoProtocolID, func(s network.Stream) {
 		log.Printf("Incoming screen share connection from: %s", s.Conn().RemotePeer())
 		if err := ReceiveScreenShare(ctx, s); err != nil {
@@ -132,10 +77,7 @@ func SetupHost(ctx context.Context, listenPort int, username string) (host.Host,
 		}
 	})
 
-	log.Printf("libp2p Host Started! ID: %s", h.ID())
-	for _, addr := range h.Addrs() {
-		log.Printf("  %s/p2p/%s", addr, h.ID())
-	}
+	log.Printf("libp2p Local Host Started! ID: %s", h.ID())
 
-	return h, kadDHT, streamCh, nil
+	return h, nil
 }

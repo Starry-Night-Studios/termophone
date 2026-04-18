@@ -141,22 +141,31 @@ func (m Model) renderMainPane() string {
 		}
 
 		usrStr := fmt.Sprintf("Username : %s", m.usernameInput.View())
+		lobStr := fmt.Sprintf("Lobby    : %s", m.lobbyInput.View())
 		colStr := fmt.Sprintf("Theme    : < %s >", scm)
 		qStr := fmt.Sprintf("Quality  : < %s >", qualityLabel)
 
 		// Create a specific selection style for settings
-		settingsSelected := st.Selected.Copy().Width(40).PaddingLeft(6)
+		settingsSelected := st.Selected.Copy().Width(45).PaddingLeft(6)
 
 		if m.settingsCursor == 0 {
 			b.WriteString(settingsSelected.Render(usrStr) + "\n\n")
+			b.WriteString("      " + lobStr + "\n\n")
 			b.WriteString("      " + colStr + "\n\n")
 			b.WriteString("      " + qStr + "\n\n")
 		} else if m.settingsCursor == 1 {
 			b.WriteString("      " + usrStr + "\n\n")
+			b.WriteString(settingsSelected.Render(lobStr) + "\n\n")
+			b.WriteString("      " + colStr + "\n\n")
+			b.WriteString("      " + qStr + "\n\n")
+		} else if m.settingsCursor == 2 {
+			b.WriteString("      " + usrStr + "\n\n")
+			b.WriteString("      " + lobStr + "\n\n")
 			b.WriteString(settingsSelected.Render(colStr) + "\n\n")
 			b.WriteString("      " + qStr + "\n\n")
 		} else {
 			b.WriteString("      " + usrStr + "\n\n")
+			b.WriteString("      " + lobStr + "\n\n")
 			b.WriteString("      " + colStr + "\n\n")
 			b.WriteString(settingsSelected.Render(qStr) + "\n\n")
 		}

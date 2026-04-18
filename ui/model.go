@@ -78,6 +78,7 @@ type Model struct {
 
 	settingsCursor int
 	usernameInput  textinput.Model
+	lobbyInput     textinput.Model
 	peerIDInput    textinput.Model
 	manualDialMode bool
 	colorScheme    int
@@ -101,10 +102,16 @@ type Model struct {
 
 func NewModel(cfg ModelConfig) Model {
 	appCfg := config.Get()
+	
 	ti := textinput.New()
 	ti.Placeholder = "Enter new username..."
 	ti.SetValue(appCfg.Username)
 	ti.CharLimit = 20
+
+	lobbyTI := textinput.New()
+	lobbyTI.Placeholder = "http://127.0.0.1:8080"
+	lobbyTI.SetValue(appCfg.LobbyURL)
+	lobbyTI.CharLimit = 64
 
 	peerTI := textinput.New()
 	peerTI.Placeholder = "Paste peer ID (12D3Koo...)"
@@ -132,6 +139,7 @@ func NewModel(cfg ModelConfig) Model {
 		removeCb:      cfg.RemoveCb,
 		debug:         false,
 		usernameInput: ti,
+		lobbyInput:    lobbyTI,
 		peerIDInput:   peerTI,
 		colorScheme:   appCfg.ColorScheme,
 		screenQuality: appCfg.ScreenQuality,
@@ -270,6 +278,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "s", "S":
 				m.state = stateSettings
 				m.usernameInput.Focus()
+				m.lobbyInput.Blur()
 				m.settingsCursor = 0
 				skipSettingsInputUpdate = true
 			case "p", "P":
@@ -336,13 +345,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "y", "Y", "enter":
 				if m.acceptCb != nil {
 					if m.incomingStream != nil {
-						m.incomingStream.Write([]byte{1}) // 1 = ACCEPT
+						m.incomingStream.Write([]byte{1}) 
 					}
 					go m.acceptCb(m.incomingStream)
 				}
 			case "n", "N", "esc":
 				if m.incomingStream != nil {
-					m.incomingStream.Write([]byte{0}) // 0 = DECLINE
+					m.incomingStream.Write([]byte{0}) 
 					m.incomingStream.Close()
 					m.incomingStream.Reset()
 					m.incomingStream = nil
@@ -381,35 +390,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.settingsCursor--
 				}
 			case "down":
-				if m.settingsCursor < 2 {
+				if m.settingsCursor < 3 {
 					m.settingsCursor++
 				}
 			case "left":
-				if m.settingsCursor == 1 {
+				if m.settingsCursor == 2 {
 					m.colorScheme = (m.colorScheme - 1 + len(themes)) % len(themes)
-				} else if m.settingsCursor == 2 {
+				} else if m.settingsCursor == 3 {
 					m.screenQuality = previousQuality(m.screenQuality)
 				}
 			case "right":
-				if m.settingsCursor == 1 {
+				if m.settingsCursor == 2 {
 					m.colorScheme = (m.colorScheme + 1) % len(themes)
-				} else if m.settingsCursor == 2 {
+				} else if m.settingsCursor == 3 {
 					m.screenQuality = nextQuality(m.screenQuality)
 				}
 			case "enter":
 				cfg := config.Get()
 				cfg.Username = m.usernameInput.Value()
+				cfg.LobbyURL = m.lobbyInput.Value()
 				cfg.ColorScheme = m.colorScheme
 				cfg.ScreenQuality = m.screenQuality
-				config.SaveConfig() // we will add this func
+				config.SaveConfig() 
 				m.state = stateBrowsing
 			}
 
-			if m.state == stateSettings { // if we haven't exited
+			if m.state == stateSettings { 
 				if m.settingsCursor == 0 {
 					m.usernameInput.Focus()
+					m.lobbyInput.Blur()
+				} else if m.settingsCursor == 1 {
+					m.usernameInput.Blur()
+					m.lobbyInput.Focus()
 				} else {
 					m.usernameInput.Blur()
+					m.lobbyInput.Blur()
 				}
 			}
 		}
@@ -507,9 +522,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.state == stateSettings && !skipSettingsInputUpdate {
-		var cmd tea.Cmd
-		m.usernameInput, cmd = m.usernameInput.Update(msg)
-		cmds = append(cmds, cmd)
+		var cmd1, cmd2 tea.Cmd
+		m.usernameInput, cmd1 = m.usernameInput.Update(msg)
+		m.lobbyInput, cmd2 = m.lobbyInput.Update(msg)
+		cmds = append(cmds, cmd1, cmd2)
 	}
 
 	return m, tea.Batch(cmds...)

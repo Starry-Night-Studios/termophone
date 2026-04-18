@@ -9,11 +9,12 @@ import (
 
 type Contact struct {
 	Name   string `json:"name"`
-	PeerID string `json:"peer_id"`
+	PeerID string `json:"peer_id"` // This remains your global Ed25519 identity identifier
 }
 
 type Config struct {
 	Username        string    `json:"username"`
+	LobbyURL       string    `json:"lobby_url"` // NEW: Where the client connects for matchmaking and chat
 	Contacts        []Contact `json:"contacts"`
 	AECTrimOffsetMs int       `json:"aec_trim_offset_ms"`
 	ColorScheme     int       `json:"color_scheme"`
@@ -43,17 +44,18 @@ func Get() *Config {
 	path := getPath()
 	current = &Config{
 		Username:        "Anon",
+		LobbyURL:       "http://127.0.0.1:8080", // Defaulting to your local testing lobby
 		Contacts:        []Contact{},
-		AECTrimOffsetMs: 120, // Default hardware delay offset
+		AECTrimOffsetMs: 120,
 		ColorScheme:     0,
 		ScreenQuality:   "medium",
 	}
+	
 	file, err := os.Open(path)
 	if err == nil {
 		json.NewDecoder(file).Decode(current)
 		file.Close()
 	} else {
-		// Just write default, no more mapping old .termophone.json paths!
 		writeToDisk(current)
 	}
 	return current
@@ -76,7 +78,7 @@ func SaveContact(c Contact) {
 
 	for _, existing := range current.Contacts {
 		if existing.PeerID == c.PeerID {
-			return // already exists
+			return 
 		}
 	}
 
