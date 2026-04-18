@@ -148,22 +148,23 @@ func (m Model) renderMainPane() string {
 		// Create a specific selection style for settings
 		settingsSelected := st.Selected.Copy().Width(45).PaddingLeft(6)
 
-		if m.settingsCursor == 0 {
+		switch m.settingsCursor {
+		case 0:
 			b.WriteString(settingsSelected.Render(usrStr) + "\n\n")
 			b.WriteString("      " + lobStr + "\n\n")
 			b.WriteString("      " + colStr + "\n\n")
 			b.WriteString("      " + qStr + "\n\n")
-		} else if m.settingsCursor == 1 {
+		case 1:
 			b.WriteString("      " + usrStr + "\n\n")
 			b.WriteString(settingsSelected.Render(lobStr) + "\n\n")
 			b.WriteString("      " + colStr + "\n\n")
 			b.WriteString("      " + qStr + "\n\n")
-		} else if m.settingsCursor == 2 {
+		case 2:
 			b.WriteString("      " + usrStr + "\n\n")
 			b.WriteString("      " + lobStr + "\n\n")
 			b.WriteString(settingsSelected.Render(colStr) + "\n\n")
 			b.WriteString("      " + qStr + "\n\n")
-		} else {
+		default:
 			b.WriteString("      " + usrStr + "\n\n")
 			b.WriteString("      " + lobStr + "\n\n")
 			b.WriteString("      " + colStr + "\n\n")
@@ -187,9 +188,7 @@ func (m Model) renderMainPane() string {
 	case statePostCall:
 		b.WriteString(fmt.Sprintf("\n      Session ended.\n\n      Unsaved peer: %s\n      Press [S] to save contact,\n      or any key to return.\n", m.lastPeerName))
 	case stateIncoming:
-		remoteID := m.incomingStream.Conn().RemotePeer()
-		displayName := m.peerDisplayName(remoteID)
-		b.WriteString(fmt.Sprintf("\n      Incoming connection :\n      %s\n\n      [Y] accept   [N] reject\n", displayName))
+		b.WriteString(fmt.Sprintf("\n      Incoming call from :\n      %s\n\n      [Y] accept   [N] reject\n", m.incomingCallerName))
 	case stateInCall:
 		elapsed := time.Since(m.callStart).Round(time.Second)
 		durStr := fmt.Sprintf("%02d:%02d:%02d", int(elapsed.Hours()), int(elapsed.Minutes())%60, int(elapsed.Seconds())%60)

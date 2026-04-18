@@ -27,7 +27,7 @@ func NewRelayClient(relayAddr string, roomID uint32, secretKey uint64, myID uint
 		return nil, fmt.Errorf("failed to resolve relay address: %v", err)
 	}
 
-	// DialUDP acts like a "connected" UDP socket. 
+	// DialUDP acts like a "connected" UDP socket.
 	// The OS will optimize routing since the destination never changes.
 	conn, err := net.DialUDP("udp", nil, addr)
 	if err != nil {
@@ -55,7 +55,7 @@ func (c *RelayClient) SendAudio(payload []byte, targetMask uint8) error {
 	// 2. Build the exact 16-byte header the Relay expects
 	// [4 bytes RoomID][8 bytes SipHash][1 byte SenderID][1 byte TargetMask][2 bytes reserved]
 	packet := make([]byte, HeaderSize+len(payload))
-	
+
 	binary.BigEndian.PutUint32(packet[0:4], c.roomID)
 	binary.BigEndian.PutUint64(packet[4:12], signature)
 	packet[12] = c.myID
@@ -83,25 +83,25 @@ func (c *RelayClient) StartListening(audioChan chan<- []byte) {
 				continue // Drop malformed packets instantly
 			}
 
-			// We don't technically *need* to verify the SipHash here because 
-			// the Relay already proved it wasn't garbage. But checking the RoomID 
+			// We don't technically *need* to verify the SipHash here because
+			// the Relay already proved it wasn't garbage. But checking the RoomID
 			// protects us against stray UDP packets hitting our local port.
 			incomingRoomID := binary.BigEndian.Uint32(buffer[0:4])
 			if incomingRoomID != c.roomID {
 				continue
 			}
 
-			// Slice out just the payload (zero-copy extraction)
-			// We clone it before sending it to the channel so the next Read() 
-			// doesn't overwrite the memory while the mixer is trying to play it.
-			payload := make([]byte, n-HeaderSize)
-			copy(payload, buffer[HeaderSize:n])
+			// Allocate 2 extra bytes for sequence prefix (dummy 0,0)
+			payload := make([]byte, n-HeaderSize+2)
+			payload[0] = 0
+			payload[1] = 0
+			copy(payload[2:], buffer[HeaderSize:n])
 
 			// Ship it to the audio pipeline (mixer.go)
 			select {
 			case audioChan <- payload:
 			default:
-				// If the mixer channel is full, drop the frame. 
+				// If the mixer channel is full, drop the frame.
 				// In real-time VoIP, late audio is worse than dropped audio.
 			}
 		}

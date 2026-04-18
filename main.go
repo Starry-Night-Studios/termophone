@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"log/slog"
 	"sync"
@@ -15,7 +16,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gen2brain/malgo"
-	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 )
 
@@ -33,35 +33,33 @@ func (cw chanWriter) Write(p []byte) (int, error) {
 func main() {
 	logCh := make(chan string, 32)
 	cw := chanWriter(logCh)
-
-	handler := slog.NewJSONHandler(cw, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	})
-	slogger := slog.New(handler)
-	slog.SetDefault(slogger)
-
+	slog.SetDefault(slog.New(slog.NewJSONHandler(cw, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	log.SetOutput(cw)
 	log.SetFlags(0)
 
 	cfg := config.Get()
 	slog.Info("Starting Termophone Client", "user", cfg.Username)
-
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// 1. Updated SetupHost call (No more DHT or incoming stream channels)
+	// 1. Setup Local Identity
 	h, err := vnet.SetupHost(ctx, 0, cfg.Username)
 	if err != nil {
-		log.Fatal("Failed to setup libp2p host:", err)
+		log.Fatal(err)
 	}
 	defer h.Close()
 	defer cancel()
 
-	// Dummy channel to keep the UI compiler happy until we rebuild the Lobby UI
-	incomingStreamCh := make(chan network.Stream)
-
 	peerCh := make(chan peer.AddrInfo, 10)
-	if err := vnet.SetupDiscovery(ctx, h, peerCh); err != nil {
-		log.Fatal("Failed to start mDNS:", err)
+	vnet.SetupDiscovery(ctx, h, peerCh)
+
+	// 2. Extract our Ed25519 Private Key to authenticate with the Lobby
+	privKey := h.Peerstore().PrivKey(h.ID())
+	if privKey == nil {
+		log.Fatal("Could not retrieve private key from peerstore")
+	}
+	lobby, err := vnet.NewLobbyClient(cfg.LobbyURL, cfg.Username, privKey, h.ID())
+	if err != nil {
+		log.Printf("Warning: Failed to connect to Lobby at %s: %v", cfg.LobbyURL, err)
 	}
 
 	audioCh := make(chan ui.MsgAudioLevel, 32)
@@ -70,18 +68,21 @@ func main() {
 	disconnCh := make(chan ui.MsgPeerDisconnected, 2)
 	statusCh := make(chan string, 5)
 	muted := &atomic.Bool{}
-
-	// 2. startAudio now takes our new RelayClient instead of a libp2p stream
-	startAudio := func(relay *vnet.RelayClient, remoteName string, remoteID string) {
+	startAudio := func(room vnet.RoomReady) {
 		callCtx, callCancel := context.WithCancel(ctx)
-		rawCh := make(chan []byte, 8)
-		sendCh := make(chan []byte, 8)
-		recvCh := make(chan []byte, 16)
-		filteredSendCh := make(chan []byte, 8)
+		rawCh, sendCh, recvCh, filteredSendCh := make(chan []byte, 8), make(chan []byte, 8), make(chan []byte, 16), make(chan []byte, 8)
 
 		freePool := make(chan []byte, 32)
 		for i := 0; i < 32; i++ {
 			freePool <- make([]byte, audio.FrameBytes)
+		}
+
+		relayAddr := fmt.Sprintf("%s:%d", room.RelayIP, room.RelayPort)
+		relay, err := vnet.NewRelayClient(relayAddr, room.RoomID, room.SecretKey, room.MyID)
+		if err != nil {
+			log.Println("Relay connection failed:", err)
+			callCancel()
+			return
 		}
 
 		var disconnectOnce sync.Once
@@ -92,7 +93,7 @@ func main() {
 		notifyDisconnected := func() {
 			disconnectOnce.Do(func() {
 				callCancel()
-				relay.Close() // Close the UDP socket
+				relay.Close()
 				if capturer != nil {
 					capturer.Stop()
 					capturer.Uninit()
@@ -103,7 +104,6 @@ func main() {
 				}
 				if mctx != nil {
 					mctx.Free()
-					mctx = nil
 				}
 				select {
 				case disconnCh <- ui.MsgPeerDisconnected{}:
@@ -112,12 +112,16 @@ func main() {
 			})
 		}
 
-		var err error
-		mctx, err = malgo.InitContext(nil, malgo.ContextConfig{}, func(msg string) {
-			log.Print(msg)
-		})
+		go func() {
+			<-callCtx.Done()
+			notifyDisconnected()
+		}()
+
+		// Proper error handling for malgo.InitContext
+		mctx, err = malgo.InitContext(nil, malgo.ContextConfig{}, func(msg string) { log.Print(msg) })
 		if err != nil {
-			log.Printf("Failed to init audio context: %v", err)
+			log.Printf("malgo.InitContext failed: %v", err)
+			notifyDisconnected()
 			return
 		}
 
@@ -125,34 +129,30 @@ func main() {
 
 		capturer, err = audio.NewCapturer(mctx, rawCh, freePool)
 		if err != nil {
+			log.Printf("audio.NewCapturer failed: %v", err)
 			notifyDisconnected()
 			return
 		}
+
 		player, err = audio.NewPlayer(mctx, rb)
 		if err != nil {
+			log.Printf("audio.NewPlayer failed: %v", err)
 			notifyDisconnected()
 			return
 		}
 
 		codec, err := audio.NewCodec()
 		if err != nil {
+			log.Printf("audio.NewCodec failed: %v", err)
 			notifyDisconnected()
 			return
 		}
 
-		aecDelayMs := config.Get().AECTrimOffsetMs
-
-		go audio.NewPipeline(rawCh, sendCh, rb, aecDelayMs, freePool).Run(callCtx)
+		go audio.NewPipeline(rawCh, sendCh, rb, config.Get().AECTrimOffsetMs, freePool).Run(callCtx)
 		go audio.RecvPipeline(recvCh, rb, codec)
 
-		if err := capturer.Start(); err != nil {
-			notifyDisconnected()
-			return
-		}
-		if err := player.Start(); err != nil {
-			notifyDisconnected()
-			return
-		}
+		capturer.Start()
+		player.Start()
 
 		go func() {
 			for {
@@ -173,16 +173,16 @@ func main() {
 			}
 		}()
 
-		// 3. UDP WRITER: Send filtered mic data to the Relay
+		// Fire UDP packets at the Relay
 		go func() {
 			for chunk := range filteredSendCh {
-				// TargetMask 255 = Broadcast to all peers in the room
-				relay.SendAudio(chunk, 255) 
+				targetMask := uint8(0xFF ^ (1 << room.MyID))
+				relay.SendAudio(chunk, targetMask)
 			}
 		}()
-
-		// 4. UDP READER: Listen for incoming audio from the Relay
 		relay.StartListening(recvCh)
+
+		// (Removed stray go func with relay.SendAudio(chunk, 255) that caused syntax error)
 
 		go func() {
 			ticker := time.NewTicker(time.Second)
@@ -191,60 +191,71 @@ func main() {
 				select {
 				case <-callCtx.Done():
 					return
-				case audioCh <- ui.MsgAudioLevel{Local: 1.0, Peer: 1.0}: 
+				case audioCh <- ui.MsgAudioLevel{Local: 1.0, Peer: 1.0}:
 				default:
 				}
 			}
 		}()
 
-		connectCh <- ui.MsgPeerConnected{Name: remoteName, ID: remoteID}
-		log.Printf("UDP Audio transmission started via Relay!")
+		// Tell the UI we are connected!
+		connectCh <- ui.MsgPeerConnected{Name: room.PeerName, ID: ""}
+		log.Printf("UDP Session Live on Room %d!", room.RoomID)
+	}
+
+	// 4. Background Lobby Event Listener
+	if lobby != nil {
+		go func() {
+			for room := range lobby.RoomReadyCh {
+				go startAudio(room)
+			}
+		}()
 	}
 
 	dialCb := func(id string) error {
-		log.Printf("Dialing via Relay...")
-		
-		// HACK: Hardcoded local connection for testing!
-		// We are pretending the Lobby told us to join Room 777.
-		relay, err := vnet.NewRelayClient("127.0.0.1:4000", 777, 111222, 1)
-		if err != nil {
-			statusCh <- "Relay unreachable"
-			return err
+		if lobby != nil {
+			log.Printf("Ringing %s via Lobby...", id)
+			lobby.Dial(id)
+		} else {
+			statusCh <- "Lobby offline"
 		}
-
-		// Spin up the microphone and speaker pipeline
-		go startAudio(relay, "Room 777", id)
 		return nil
 	}
 
-	acceptCb := func(stream network.Stream) error {
-		// Deprecated: We don't accept incoming P2P streams anymore.
+	respondCb := func(callerID string, accept bool) error {
+		if lobby != nil {
+			lobby.RespondToCall(callerID, accept)
+		}
 		return nil
 	}
 
-	saveContactCb := func(c config.Contact) { config.SaveContact(c) }
-	removeContactCb := func(peerID string) { config.RemoveContact(peerID) }
+	// Safely extract Lobby channels (or leave them nil if offline)
+	var lobbyIncoming <-chan vnet.IncomingCall
+	var lobbyErr <-chan string
+	if lobby != nil {
+		lobbyIncoming = lobby.IncomingCallCh
+		lobbyErr = lobby.ErrorCh
+	}
 
 	model := ui.NewModel(ui.ModelConfig{
-		Host:      h,
-		PeerCh:    peerCh,
-		StreamCh:  incomingStreamCh,
-		LogCh:     logCh,
-		AudioCh:   audioCh,
-		StatsCh:   statsCh,
-		ConnectCh: connectCh,
-		DisconnCh: disconnCh,
-		StatusCh:  statusCh,
-		Muted:     muted,
-		Contacts:  cfg.Contacts,
-		DialCb:    dialCb,
-		AcceptCb:  acceptCb,
-		SaveCb:    saveContactCb,
-		RemoveCb:  removeContactCb,
+		Host:          h,
+		PeerCh:        peerCh,
+		LogCh:         logCh,
+		AudioCh:       audioCh,
+		StatsCh:       statsCh,
+		ConnectCh:     connectCh,
+		DisconnCh:     disconnCh,
+		StatusCh:      statusCh,
+		Muted:         muted,
+		Contacts:      cfg.Contacts,
+		DialCb:        dialCb,
+		RespondCb:     respondCb,
+		SaveCb:        func(c config.Contact) { config.SaveContact(c) },
+		RemoveCb:      func(id string) { config.RemoveContact(id) },
+		LobbyIncoming: lobbyIncoming, // Use the safe variables
+		LobbyErr:      lobbyErr,      // Use the safe variables
 	})
 
-	p := tea.NewProgram(model, tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
+	if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
 		log.Fatal(err)
 	}
 }
