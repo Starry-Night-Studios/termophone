@@ -9,13 +9,10 @@ import (
 	"path/filepath"
 
 	"github.com/libp2p/go-libp2p"
-	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
-	"github.com/libp2p/go-libp2p/core/peer"
 	libp2pquic "github.com/libp2p/go-libp2p/p2p/transport/quic"
-	"github.com/multiformats/go-multiaddr"
 )
 
 const ProtocolID = "/termophone/audio/1.0.0"
@@ -50,24 +47,11 @@ func getIdentity() (crypto.PrivKey, error) {
 	return priv, os.WriteFile(keyPath, keyBytes, 0600)
 }
 
-// SetupHost creates a new libp2p host, loads identity, attaches peerstore, and runs Kad DHT.
-func SetupHost(ctx context.Context, listenPort int, username string) (host.Host, *dht.IpfsDHT, <-chan network.Stream, error) {
+// SetupHost creates a new libp2p host, loads identity, attaches peerstore.
+func SetupHost(ctx context.Context, listenPort int, username string) (host.Host, <-chan network.Stream, error) {
 	priv, err := getIdentity()
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to initialize identity: %v", err)
-	}
-
-	var staticRelays []peer.AddrInfo
-	for _, addr := range DefaultRelayAddrs {
-		ma, err := multiaddr.NewMultiaddr(addr)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to parse relay address %s: %v", addr, err)
-		}
-		info, err := peer.AddrInfoFromP2pAddr(ma)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to parse relay info from %s: %v", addr, err)
-		}
-		staticRelays = append(staticRelays, *info)
+		return nil, nil, fmt.Errorf("failed to initialize identity: %v", err)
 	}
 
 	h, err := libp2p.New(
@@ -80,37 +64,9 @@ func SetupHost(ctx context.Context, listenPort int, username string) (host.Host,
 		libp2p.Transport(libp2pquic.NewTransport),
 		libp2p.UserAgent("termophone/"+username),
 		libp2p.Identity(priv),
-		libp2p.EnableNATService(),
-		libp2p.EnableHolePunching(),
-		libp2p.NATPortMap(),
-		libp2p.EnableAutoRelayWithStaticRelays(staticRelays),
 	)
 	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	// Setup Kademlia DHT in client mode to avoid unnecessary WAN traffic
-	kadDHT, err := dht.New(ctx, h, dht.Mode(dht.ModeClient))
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to create DHT: %v", err)
-	}
-
-	// Bootstrap the DHT to enable peer discovery across NAT
-	if err := kadDHT.Bootstrap(ctx); err != nil {
-		log.Printf("DHT bootstrap error (non-fatal): %v", err)
-	}
-
-	// Connect to bootstrap peers for initial peer discovery
-	for _, addr := range dht.DefaultBootstrapPeers {
-		pi, err := peer.AddrInfoFromP2pAddr(addr)
-		if err != nil {
-			continue
-		}
-		go func(peerInfo peer.AddrInfo) {
-			if err := h.Connect(ctx, peerInfo); err == nil {
-				log.Printf("Connected to bootstrap peer %s", peerInfo.ID)
-			}
-		}(*pi)
+		return nil, nil, err
 	}
 
 	streamCh := make(chan network.Stream, 1)
@@ -137,5 +93,5 @@ func SetupHost(ctx context.Context, listenPort int, username string) (host.Host,
 		log.Printf("  %s/p2p/%s", addr, h.ID())
 	}
 
-	return h, kadDHT, streamCh, nil
+	return h, streamCh, nil
 }

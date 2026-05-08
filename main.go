@@ -52,11 +52,10 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	h, kadDHT, incomingStreamCh, err := vnet.SetupHost(ctx, 0, cfg.Username)
+	h, incomingStreamCh, err := vnet.SetupHost(ctx, 0, cfg.Username)
 	if err != nil {
 		log.Fatal("Failed to setup libp2p host:", err)
 	}
-	defer kadDHT.Close()
 	defer h.Close()
 	defer cancel()
 
@@ -227,15 +226,7 @@ func main() {
 
 		p := h.Peerstore().PeerInfo(pid)
 		if len(p.Addrs) == 0 {
-			dhtCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			defer cancel()
-			addrInfo, err := kadDHT.FindPeer(dhtCtx, pid)
-			if err == nil {
-				p = addrInfo
-			} else {
-				log.Printf("Warning: DHT resolution failed: %v", err)
-				return fmt.Errorf("no addresses found locally or via DHT: %w", err)
-			}
+			return fmt.Errorf("no addresses found locally for peer")
 		}
 
 		if err := h.Connect(ctx, p); err != nil {
