@@ -2,7 +2,7 @@
 
 Peer-to-peer voice calls in the terminal.
 
-![Termophone](https://i.postimg.cc/0Q7CgCyC/Termophone.png)
+![Termophone](https://github.com/zendex19/U1907-site-images/blob/main/projects/screenshot.png?raw=true)
 
 ## Requirements
 
@@ -88,11 +88,11 @@ go test . ./audio ./config ./net ./ui
 - [x] SpeexDSP AEC
 - [x] RNNoise
 - [x] Ring buffer overwrite handling
-- [ ] PCM mixing with clamping
 - [x] Ring buffer drift fix
 - [x] libp2p
 - [x] mDNS
 - [x] DHT
+- [ ] PCM mixing with clamping
 
 ## License
 

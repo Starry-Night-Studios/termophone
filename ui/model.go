@@ -291,9 +291,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "tab":
 				m.focusedPane = (m.focusedPane + 1) % 3
-				if m.focusedPane == paneContacts {
+				switch m.focusedPane {
+				case paneContacts:
 					m.cursor = 0
-				} else if m.focusedPane == paneOnline {
+				case paneOnline:
 					m.cursor = len(m.contacts)
 				}
 
@@ -584,10 +585,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if m.state == stateSettings && !skipSettingsInputUpdate {
 		var cmd tea.Cmd
-		if m.settingsCursor == 0 {
+		switch m.settingsCursor {
+		case 0:
 			m.usernameInput, cmd = m.usernameInput.Update(msg)
 			cmds = append(cmds, cmd)
-		} else if m.settingsCursor == 3 {
+		case 3:
 			m.lobbyInput, cmd = m.lobbyInput.Update(msg)
 			cmds = append(cmds, cmd)
 		}
