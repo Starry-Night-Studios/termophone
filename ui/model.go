@@ -26,6 +26,13 @@ const (
 	stateSettings
 )
 
+type focusPane int
+
+const (
+	paneSidebar focusPane = iota
+	paneMain
+)
+
 type ModelConfig struct {
 	Host         host.Host
 	PeerCh       <-chan peer.AddrInfo
@@ -47,8 +54,9 @@ type ModelConfig struct {
 }
 
 type Model struct {
-	state uiState
-	h     host.Host
+	state       uiState
+	focusedPane focusPane
+	h           host.Host
 
 	peers          []peer.AddrInfo
 	newPeers       []peer.AddrInfo
@@ -126,6 +134,7 @@ func NewModel(cfg ModelConfig) Model {
 
 	return Model{
 		state:         stateBrowsing,
+		focusedPane:   paneSidebar,
 		h:             cfg.Host,
 		peers:         make([]peer.AddrInfo, 0),
 		newPeers:      make([]peer.AddrInfo, 0),
@@ -303,6 +312,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			switch msg.String() {
+			case "tab":
+				if m.focusedPane == paneSidebar {
+					m.focusedPane = paneMain
+				} else {
+					m.focusedPane = paneSidebar
+				}
+
 			case "s", "S":
 				m.state = stateSettings
 				m.settingsCursor = 0
@@ -322,32 +338,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = "Peer list cleared (waiting for discovery...)"
 
 			case "up", "k":
-				if m.cursor > 0 {
+				if m.focusedPane == paneSidebar && m.cursor > 0 {
 					m.cursor--
 				}
 
 			case "down", "j":
-				if m.cursor < m.totalItems()-1 {
+				if m.focusedPane == paneSidebar && m.cursor < m.totalItems()-1 {
 					m.cursor++
 				}
 
 			case "x", "X", "delete", "backspace":
-				if m.cursor < len(m.contacts) && len(m.contacts) > 0 {
-					removed := m.contacts[m.cursor]
-					if m.removeCb != nil {
-						m.removeCb(removed.PeerID)
-					}
-					m.contacts = append(m.contacts[:m.cursor], m.contacts[m.cursor+1:]...)
-					m.updateNewPeers()
-					if removed.Name != "" {
-						m.statusMsg = "Removed contact: " + removed.Name
-					} else {
-						m.statusMsg = "Removed contact"
+				if m.focusedPane == paneSidebar {
+					if m.cursor < len(m.contacts) && len(m.contacts) > 0 {
+						removed := m.contacts[m.cursor]
+						if m.removeCb != nil {
+							m.removeCb(removed.PeerID)
+						}
+						m.contacts = append(m.contacts[:m.cursor], m.contacts[m.cursor+1:]...)
+						m.updateNewPeers()
+						if removed.Name != "" {
+							m.statusMsg = "Removed contact: " + removed.Name
+						} else {
+							m.statusMsg = "Removed contact"
+						}
 					}
 				}
 
 			case "enter", " ":
-				if m.totalItems() > 0 {
+				if m.focusedPane == paneSidebar && m.totalItems() > 0 {
 					var selectedID, selectedName string
 					filtered := m.filteredLobbyUsers()
 					contactsLen := len(m.contacts)
@@ -355,18 +373,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 					switch {
 					case m.cursor < contactsLen:
-						// Contact selected
 						selectedID = m.contacts[m.cursor].PeerID
 						selectedName = m.contacts[m.cursor].Name
-
 					case m.cursor < contactsLen+lobbyLen:
-						// Lobby user selected
 						u := filtered[m.cursor-contactsLen]
 						selectedID = u.Username
 						selectedName = u.Username
-
 					default:
-						// mDNS new peer selected
 						idx := m.cursor - contactsLen - lobbyLen
 						if idx >= 0 && idx < len(m.newPeers) {
 							selectedID = m.newPeers[idx].ID.String()

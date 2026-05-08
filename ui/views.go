@@ -79,24 +79,32 @@ func cropHeight(s string, max int) string {
 	return s
 }
 
-// ── CUSTOM BORDER DRAWING (With strict dimensions) ──────────────────────
-func (m Model) wrapWithTitle(content string, title string, width int, height int) string {
-	st := m.getStyles()
+func (m Model) wrapWithTitle(content string, title string, width int, height int, focused bool) string {
+	idx := m.colorScheme
+	if idx < 0 || idx >= len(themes) {
+		idx = 0
+	}
+	th := themes[idx]
 
-	borderColor := st.Dim.GetForeground()
+	var borderColor lipgloss.Color
+	if focused {
+		borderColor = th.Title // Accent color when focused
+	} else {
+		borderColor = th.Dim
+	}
 
-	targetInnerW := width - 4 // -2 padding, -2 borders
+	targetInnerW := width - 4
 	if targetInnerW < 1 {
 		targetInnerW = 1
 	}
-	targetInnerH := height - 2 // -1 top bar, -1 bottom border
+	targetInnerH := height - 2
 	if targetInnerH < 1 {
 		targetInnerH = 1
 	}
 
-	// explicit width/height forces the box to occupy space uniformly
+	// 1. Swapped NormalBorder() to ThickBorder()
 	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), false, true, true, true).
+		Border(lipgloss.ThickBorder(), false, true, true, true).
 		BorderForeground(borderColor).
 		Padding(0, 1).
 		Width(targetInnerW).
@@ -105,25 +113,30 @@ func (m Model) wrapWithTitle(content string, title string, width int, height int
 	renderedBox := boxStyle.Render(content)
 	actualWidth := lipgloss.Width(renderedBox)
 
-	leftStr := "┌─"
+	// 2. Using heavy box-drawing characters for the top line
+	leftStr := "┏━"
 	midStr := title
 	if title != "" {
 		midStr = " " + title + " "
 	} else {
-		leftStr = "┌"
+		leftStr = "┏"
 	}
 
 	borderStyle := lipgloss.NewStyle().Foreground(borderColor)
-	titleStyle := lipgloss.NewStyle().Foreground(borderColor)
+	
+	// 3. Made the title text permanently Bold
+	titleStyle := lipgloss.NewStyle().Foreground(borderColor).Bold(true)
 
 	left := borderStyle.Render(leftStr)
 	mid := titleStyle.Render(midStr)
 
-	remLen := actualWidth - lipgloss.Width(leftStr) - lipgloss.Width(midStr) - 1 // 1 for the '┐'
+	remLen := actualWidth - lipgloss.Width(leftStr) - lipgloss.Width(midStr) - 1 // 1 for the '┓'
 	if remLen < 0 {
 		remLen = 0
 	}
-	right := borderStyle.Render(strings.Repeat("─", remLen) + "┐")
+	
+	// 4. Using heavy characters for the remainder of the top line
+	right := borderStyle.Render(strings.Repeat("━", remLen) + "┓")
 	topBar := left + mid + right
 
 	return lipgloss.JoinVertical(lipgloss.Top, topBar, renderedBox)
@@ -390,10 +403,24 @@ func (m Model) View() string {
 	if m.state == stateInCall {
 		info := fmt.Sprintf("\n  %s\n", st.Info.Render(m.peerName))
 		info += st.Dim.Render("\n  Navigation disabled\n  during active session.")
-		leftPane = m.wrapWithTitle(info, "In Call", sidebarWidth, contentHeight)
+		leftPane = m.wrapWithTitle(info, "In Call", sidebarWidth, contentHeight, false)
 	} else {
-		contactsPane := m.wrapWithTitle(m.renderContactsPane(), "Contacts", sidebarWidth, topHeight)
-		onlinePane := m.wrapWithTitle(m.renderOnlinePane(), "Online", sidebarWidth, bottomHeight)
+		isContactsActive := false
+		isOnlineActive := false
+
+		if m.focusedPane == paneSidebar {
+			// If both lists are empty, default to highlighting Contacts
+			if len(m.contacts) == 0 && m.totalItems() == 0 {
+				isContactsActive = true 
+			} else if m.cursor < len(m.contacts) {
+				isContactsActive = true // Cursor is in the top list
+			} else {
+				isOnlineActive = true   // Cursor moved down to the bottom list
+			}
+		}
+
+		contactsPane := m.wrapWithTitle(m.renderContactsPane(), "Contacts", sidebarWidth, topHeight, isContactsActive)
+		onlinePane := m.wrapWithTitle(m.renderOnlinePane(), "Online", sidebarWidth, bottomHeight, isOnlineActive)
 		leftPane = lipgloss.JoinVertical(lipgloss.Top, contactsPane, onlinePane)
 	}
 
@@ -426,13 +453,13 @@ func (m Model) View() string {
 	}
 
 	mainTitle := fmt.Sprintf("Main [ %s ]", headerText)
-	rightPane := m.wrapWithTitle(rightPaneContent, mainTitle, mainWidth, contentHeight)
+	rightPane := m.wrapWithTitle(rightPaneContent, mainTitle, mainWidth, contentHeight, m.focusedPane == paneMain)
 
 	// ── Join Everything (with a clean 2-space gap) ──────────────────────
 	split := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, "  ", rightPane)
 
-	// Shortened the keys list to prevent terminal width wrapping
-	keysStr := "  [up/down] select  [Enter] connect  [P] paste id  [S] set  [Q] quit"
+	// Update keysStr with [Tab] hint
+	keysStr := "  [Tab] focus  [↑↓] select  [Enter] connect  [P] paste  [S] settings  [Q] quit"
 	if m.state == stateInCall {
 		keysStr = "  [M] mute  [V] video  [D] debug  [Q] quit"
 	} else if m.state == stateBrowsing && m.manualDialMode {
@@ -449,7 +476,7 @@ func (m Model) View() string {
 		ioStr = fmt.Sprintf("Peer ID: %s  ", peerID)
 	}
 
-	footerWidth := m.WindowWidth // Use absolute window width for math
+	footerWidth := m.WindowWidth - 1 // Leave 1 char margin
 	footerStyle := st.Info.Copy().Bold(true)
 	keysRendered := footerStyle.Render(keysStr)
 	ioRendered := footerStyle.Render(ioStr)
