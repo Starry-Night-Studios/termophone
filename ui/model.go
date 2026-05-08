@@ -140,6 +140,8 @@ func NewModel(cfg ModelConfig) Model {
 		connectCh:     cfg.ConnectCh,
 		disconnCh:     cfg.DisconnCh,
 		statusCh:      cfg.StatusCh,
+		lobbyState:    "connecting",
+		lobbyStateCh:  cfg.LobbyStateCh,
 		muted:         cfg.Muted,
 		logs:          make([]string, 0),
 		dialCb:        cfg.DialCb,
@@ -150,8 +152,6 @@ func NewModel(cfg ModelConfig) Model {
 		usernameInput: ti,
 		peerIDInput:   peerTI,
 		lobbyInput:    lobbyTI,
-		lobbyState:    "connecting",
-		lobbyStateCh:  cfg.LobbyStateCh,
 		colorScheme:   appCfg.ColorScheme,
 		screenQuality: appCfg.ScreenQuality,
 	}
@@ -186,7 +186,6 @@ func drain[T any](ch <-chan T) []T {
 	}
 }
 
-// filteredLobbyUsers returns lobby users excluding ourself.
 func (m Model) filteredLobbyUsers() []LobbyUser {
 	myUsername := config.Get().Username
 	var out []LobbyUser
@@ -215,7 +214,6 @@ func (m *Model) updateNewPeers() {
 	m.clampCursor()
 }
 
-// clampCursor ensures the cursor stays within valid bounds.
 func (m *Model) clampCursor() {
 	total := m.totalItems()
 	if total == 0 {
@@ -244,7 +242,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// ── Global shortcuts (work in any state) ──────────────────────
+		// ── Global shortcuts ──────────────────────
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
@@ -301,7 +299,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.peerIDInput, cmd = m.peerIDInput.Update(msg)
 					cmds = append(cmds, cmd)
 				}
-				break // exit switch m.state — don't handle normal browse keys
+				break
 			}
 
 			switch msg.String() {
@@ -362,7 +360,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						selectedName = m.contacts[m.cursor].Name
 
 					case m.cursor < contactsLen+lobbyLen:
-						// Lobby user selected — use username as the dial ID
+						// Lobby user selected
 						u := filtered[m.cursor-contactsLen]
 						selectedID = u.Username
 						selectedName = u.Username
@@ -393,13 +391,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "y", "Y", "enter":
 				if m.acceptCb != nil {
 					if m.incomingStream != nil {
-						m.incomingStream.Write([]byte{1}) // 1 = ACCEPT
+						m.incomingStream.Write([]byte{1}) // ACCEPT
 					}
 					go m.acceptCb(m.incomingStream)
 				}
 			case "n", "N", "esc":
 				if m.incomingStream != nil {
-					m.incomingStream.Write([]byte{0}) // 0 = DECLINE
+					m.incomingStream.Write([]byte{0}) // DECLINE
 					m.incomingStream.Close()
 					m.incomingStream.Reset()
 					m.incomingStream = nil
@@ -446,7 +444,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else if m.settingsCursor == 2 {
 					m.screenQuality = previousQuality(m.screenQuality)
 				}
-				// row 0 (username) and row 3 (lobby URL) are text inputs — no left/right
 			case "right":
 				if m.settingsCursor == 1 {
 					m.colorScheme = (m.colorScheme + 1) % len(themes)
@@ -463,7 +460,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateBrowsing
 			}
 
-			// Manage focus after cursor movement (only if still in settings)
 			if m.state == stateSettings {
 				if m.settingsCursor == 0 {
 					m.usernameInput.Focus()
@@ -485,7 +481,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lobbyState = state
 		}
 
-		// mDNS peer updates
 		for _, p := range drain(m.updateCh) {
 			exists := false
 			for _, ep := range m.peers {
@@ -500,7 +495,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Lobby user list updates
 		if m.lobbyUsersCh != nil {
 			for _, lu := range drain(m.lobbyUsersCh) {
 				m.lobbyUsers = lu.Users
@@ -508,7 +502,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Incoming libp2p streams
 		for _, s := range drain(m.streamCh) {
 			if m.state == stateBrowsing {
 				m.incomingStream = s
@@ -584,7 +577,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.WindowHeight = msg.Height
 	}
 
-	// Forward keypresses to the active text input in settings
 	if m.state == stateSettings && !skipSettingsInputUpdate {
 		var cmd tea.Cmd
 		if m.settingsCursor == 0 {

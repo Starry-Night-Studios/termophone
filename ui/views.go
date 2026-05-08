@@ -10,6 +10,15 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// ── ASCII Logo ──────────────────────────────────────────────────────────
+const termophoneASCII = `
+  ______                                __                   
+ /_  __/__  _________ ___  ____  ____  / /_  ____  ____  ___ 
+  / / / _ \/ ___/ __ \__ \/ __ \/ __ \/ __ \/ __ \/ __ \/ _ \
+ / / /  __/ /  / / / / / / /_/ / /_/ / / / / /_/ / / / /  __/
+/_/  \___/_/  /_/ /_/ /_/\____/ .___/_/ /_/\____/_/ /_/\___/ 
+                             /_/                             `
+
 type Styles struct {
 	Border   lipgloss.Style
 	Sidebar  lipgloss.Style
@@ -33,8 +42,8 @@ func (m Model) getStyles() Styles {
 	th := themes[idx]
 
 	return Styles{
-		Border:   lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(th.Border),
-		Sidebar:  lipgloss.NewStyle().Border(lipgloss.NormalBorder(), false, true, false, false).BorderForeground(th.Border).Padding(0, 1),
+		Border:   lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(th.Dim),
+		Sidebar:  lipgloss.NewStyle().Border(lipgloss.NormalBorder(), false, true, false, false).BorderForeground(th.Dim).Padding(0, 1),
 		Main:     lipgloss.NewStyle().Padding(0, 1),
 		Title:    lipgloss.NewStyle().Bold(true).Foreground(th.Title),
 		Info:     lipgloss.NewStyle().Foreground(th.Info),
@@ -44,7 +53,7 @@ func (m Model) getStyles() Styles {
 		Online:   lipgloss.NewStyle().Foreground(th.Online),
 		Offline:  lipgloss.NewStyle().Foreground(th.Offline),
 		Dim:      lipgloss.NewStyle().Foreground(th.Dim),
-		Selected: lipgloss.NewStyle().Background(th.Border).Foreground(lipgloss.Color("#FFFFFF")).Bold(true).Width(26),
+		Selected: lipgloss.NewStyle().Background(th.Bg2).Foreground(th.Hi).Bold(true).Width(26),
 	}
 }
 
@@ -56,19 +65,76 @@ func rmsToDb(rms float64) string {
 	return fmt.Sprintf("%-6.0fdB", db)
 }
 
-func (m Model) renderSidebar() string {
-	st := m.getStyles()
-	b := strings.Builder{}
-	b.WriteString(st.Title.Render("TERMOPHONE") + "\n\n")
+// ── UTILITIES ───────────────────────────────────────────────────────────
 
-	if m.state == stateInCall {
-		b.WriteString(fmt.Sprintf(" CONNECTED:\n  %s\n", st.Info.Render(m.peerName)))
-		b.WriteString(st.Dim.Render("\n  Navigation disabled\n  during active session."))
-		return b.String()
+// cropHeight physically prevents long text from stretching the box downward
+func cropHeight(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) > max {
+		return strings.Join(lines[:max], "\n")
+	}
+	return s
+}
+
+// ── CUSTOM BORDER DRAWING (With strict dimensions) ──────────────────────
+func (m Model) wrapWithTitle(content string, title string, width int, height int) string {
+	st := m.getStyles()
+
+	borderColor := st.Dim.GetForeground()
+
+	targetInnerW := width - 4 // -2 padding, -2 borders
+	if targetInnerW < 1 {
+		targetInnerW = 1
+	}
+	targetInnerH := height - 2 // -1 top bar, -1 bottom border
+	if targetInnerH < 1 {
+		targetInnerH = 1
 	}
 
-	// ── CONTACTS ────────────────────────────────────────────────────
-	b.WriteString(st.Info.Render(" CONTACTS") + "\n")
+	// explicit width/height forces the box to occupy space uniformly
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), false, true, true, true).
+		BorderForeground(borderColor).
+		Padding(0, 1).
+		Width(targetInnerW).
+		Height(targetInnerH)
+
+	renderedBox := boxStyle.Render(content)
+	actualWidth := lipgloss.Width(renderedBox)
+
+	leftStr := "┌─"
+	midStr := title
+	if title != "" {
+		midStr = " " + title + " "
+	} else {
+		leftStr = "┌"
+	}
+
+	borderStyle := lipgloss.NewStyle().Foreground(borderColor)
+	titleStyle := lipgloss.NewStyle().Foreground(borderColor)
+
+	left := borderStyle.Render(leftStr)
+	mid := titleStyle.Render(midStr)
+
+	remLen := actualWidth - lipgloss.Width(leftStr) - lipgloss.Width(midStr) - 1 // 1 for the '┐'
+	if remLen < 0 {
+		remLen = 0
+	}
+	right := borderStyle.Render(strings.Repeat("─", remLen) + "┐")
+	topBar := left + mid + right
+
+	return lipgloss.JoinVertical(lipgloss.Top, topBar, renderedBox)
+}
+
+// ── TOP LEFT PANE: CONTACTS ─────────────────────────────────────────────
+func (m Model) renderContactsPane() string {
+	st := m.getStyles()
+	b := strings.Builder{}
+	b.WriteString("\n")
+
 	for i, c := range m.contacts {
 		status := st.Offline.Render("[!]")
 		if m.isOnline(c.PeerID) {
@@ -89,62 +155,68 @@ func (m Model) renderSidebar() string {
 			if m.isOnline(c.PeerID) {
 				rawStatus = "[O]"
 			}
-			rowText := fmt.Sprintf("  %s %s", rawStatus, name)
+			rowText := fmt.Sprintf("%s %s", rawStatus, name)
 			if len(rowText) > 26 {
 				rowText = rowText[:26]
 			}
 			b.WriteString(st.Selected.Render(rowText) + "\n")
 		} else {
-			b.WriteString(fmt.Sprintf("  %s %s\n", status, name))
+			b.WriteString(fmt.Sprintf("%s %s\n", status, name))
 		}
 	}
 
-	// ── ONLINE (lobby users) ─────────────────────────────────────────
-	filtered := m.filteredLobbyUsers()
-	b.WriteString("\n" + st.Info.Render(" ONLINE") + "\n")
-	contactsLen := len(m.contacts)
-	for i, u := range filtered {
-		idx := contactsLen + i
-		if m.cursor == idx {
-			rowText := fmt.Sprintf("  [O] %s", u.Username)
-			if len(rowText) > 26 {
-				rowText = rowText[:26]
-			}
-			b.WriteString(st.Selected.Render(rowText) + "\n")
-		} else {
-			b.WriteString(fmt.Sprintf("  %s %s\n", st.Online.Render("[O]"), u.Username))
-		}
-	}
-	if len(filtered) == 0 {
-		b.WriteString(st.Dim.Render("  (lobby offline)\n"))
-	}
-
-	// ── LOCAL (mDNS peers) ───────────────────────────────────────────
-	if len(m.newPeers) > 0 {
-		b.WriteString("\n" + st.Info.Render(" LOCAL") + "\n")
-		localOffset := contactsLen + len(filtered)
-		for i, p := range m.newPeers {
-			displayName := m.peerDisplayName(p.ID)
-			if m.cursor == localOffset+i {
-				rowText := fmt.Sprintf("  %s", displayName)
-				if len(rowText) > 26 {
-					rowText = rowText[:26]
-				}
-				b.WriteString(st.Selected.Render(rowText) + "\n")
-			} else {
-				b.WriteString(fmt.Sprintf("  %s\n", displayName))
-			}
-		}
-	}
-
-	if len(m.contacts) == 0 && len(filtered) == 0 && len(m.newPeers) == 0 {
-		b.WriteString(st.Dim.Render("  (empty)"))
+	if len(m.contacts) == 0 {
+		b.WriteString(st.Dim.Render("(empty)"))
 	}
 
 	return b.String()
 }
 
-func (m Model) renderMainPane() string {
+// ── BOTTOM LEFT PANE: ONLINE (Lobby & Local) ────────────────────────────
+func (m Model) renderOnlinePane() string {
+	st := m.getStyles()
+	b := strings.Builder{}
+	b.WriteString("\n")
+
+	filtered := m.filteredLobbyUsers()
+	contactsLen := len(m.contacts)
+
+	for i, u := range filtered {
+		idx := contactsLen + i
+		if m.cursor == idx {
+			rowText := fmt.Sprintf("[O] %s", u.Username)
+			if len(rowText) > 26 {
+				rowText = rowText[:26]
+			}
+			b.WriteString(st.Selected.Render(rowText) + "\n")
+		} else {
+			b.WriteString(fmt.Sprintf("%s %s\n", st.Online.Render("[O]"), u.Username))
+		}
+	}
+
+	localOffset := contactsLen + len(filtered)
+	for i, p := range m.newPeers {
+		idx := localOffset + i
+		displayName := m.peerDisplayName(p.ID)
+		if m.cursor == idx {
+			if len(displayName) > 26 {
+				displayName = displayName[:26]
+			}
+			b.WriteString(st.Selected.Render(displayName) + "\n")
+		} else {
+			b.WriteString(fmt.Sprintf("%s\n", displayName))
+		}
+	}
+
+	if len(filtered) == 0 && len(m.newPeers) == 0 {
+		b.WriteString(st.Dim.Render("(empty)\n"))
+	}
+
+	return b.String()
+}
+
+// ── MAIN CONTENT PANE ───────────────────────────────────────────────────
+func (m Model) renderMainPane(innerAvailableWidth int) string {
 	st := m.getStyles()
 	b := strings.Builder{}
 
@@ -168,7 +240,12 @@ func (m Model) renderMainPane() string {
 		qStr := fmt.Sprintf("Quality  : < %s >", qualityLabel)
 		lobbyStr := fmt.Sprintf("Lobby    : %s", m.lobbyInput.View())
 
-		settingsSelected := st.Selected.Copy().Width(60).PaddingLeft(6)
+		// Ensure settings highlight box doesn't stretch past the window
+		w := innerAvailableWidth
+		if w > 60 {
+			w = 60
+		}
+		settingsSelected := st.Selected.Copy().Width(w).PaddingLeft(6)
 
 		for i, row := range []string{usrStr, colStr, qStr, lobbyStr} {
 			if m.settingsCursor == i {
@@ -177,29 +254,35 @@ func (m Model) renderMainPane() string {
 				b.WriteString("      " + row + "\n\n")
 			}
 		}
-
 		b.WriteString("\n      [Esc] cancel   [Enter] save\n      [Left/Right] change theme/quality\n")
 
 	case stateBrowsing:
-		lobbyURL := m.lobbyInput.Value()
-
-		switch m.lobbyState {
-		case "connecting":
-			b.WriteString(fmt.Sprintf("\n      Connecting to lobby : %s...\n", st.Dim.Render(lobbyURL)))
-		case "connected":
-			b.WriteString(fmt.Sprintf("\n      Connected to lobby  : %s\n", st.Info.Render(lobbyURL)))
-		default:
-			b.WriteString(fmt.Sprintf("\n      %s\n", st.Dim.Render("Lobby disconnected (Local only)")))
+		// Responsive ASCII Art
+		if innerAvailableWidth >= 65 {
+			b.WriteString("\n" + st.Title.Render(termophoneASCII) + "\n\n")
+		} else {
+			// Fallback text logo for small terminal windows
+			b.WriteString("\n" + st.Title.Render("  TERMOPHONE") + "\n\n")
 		}
 
-		b.WriteString("\n      Not in a call.\n")
+		lobbyURL := m.lobbyInput.Value()
+		switch m.lobbyState {
+		case "connecting":
+			b.WriteString(fmt.Sprintf("      Connecting to lobby : %s...\n", st.Dim.Render(lobbyURL)))
+		case "connected":
+			b.WriteString(fmt.Sprintf("      Connected to lobby  : %s\n", st.Info.Render(lobbyURL)))
+		default:
+			b.WriteString(fmt.Sprintf("      %s\n", st.Dim.Render("Lobby disconnected (Local only)")))
+		}
+
 		if m.manualDialMode {
 			b.WriteString("\n      Paste peer ID and press [Enter]:\n\n")
 			b.WriteString("      " + m.peerIDInput.View() + "\n")
 			b.WriteString(st.Dim.Render("\n      [Enter] connect   [Esc] cancel\n"))
 		} else {
-			b.WriteString("\n      Select a peer and press\n      [Enter] to connect, or [P] to paste ID.\n")
+			b.WriteString("\n      Select a peer and press [Enter] to connect, or [P] to paste ID.\n")
 		}
+
 		if m.statusMsg != "" {
 			b.WriteString(fmt.Sprintf("\n      %s\n", st.Info.Render(m.statusMsg)))
 		}
@@ -255,15 +338,12 @@ func (m Model) renderLogs(maxLines int, maxWidth int) string {
 	if maxLines <= 0 {
 		return ""
 	}
-	if maxWidth < 8 {
-		maxWidth = 8
-	}
 	b := strings.Builder{}
 	start := 0
 	if len(m.logs) > maxLines {
 		start = len(m.logs) - maxLines
 	}
-	contentWidth := maxWidth - 4 // account for "  > " prefix
+	contentWidth := maxWidth - 3 // accommodate " > "
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
@@ -275,7 +355,7 @@ func (m Model) renderLogs(maxLines int, maxWidth int) string {
 		if len(runes) > contentWidth {
 			line = string(runes[:contentWidth])
 		}
-		b.WriteString(prefixStyle.Render("  > ") + lineStyle.Render(line))
+		b.WriteString(prefixStyle.Render(" > ") + lineStyle.Render(line))
 		if i < len(m.logs)-1 {
 			b.WriteString("\n")
 		}
@@ -283,72 +363,93 @@ func (m Model) renderLogs(maxLines int, maxWidth int) string {
 	return b.String()
 }
 
+// ── ROOT RENDER METHOD ──────────────────────────────────────────────────
 func (m Model) View() string {
 	st := m.getStyles()
-	const sidebarWidth = 28
-	mainWidth := m.WindowWidth - sidebarWidth - 6
-	if mainWidth < 30 {
-		mainWidth = 30
+
+	// ── Window Sizing Math ───────────────────────────────────────────────
+	sidebarWidth := 34
+
+	mainWidth := m.WindowWidth - sidebarWidth - 2 // -2 creates the visual gap
+	if mainWidth < 40 {
+		mainWidth = 40
+	}
+	mainInnerWidth := mainWidth - 4 // minus padding/borders
+
+	contentHeight := m.WindowHeight - 4
+	if contentHeight < 15 {
+		contentHeight = 15
+	}
+	innerAvailableHeight := contentHeight - 2
+
+	topHeight := contentHeight / 2
+	bottomHeight := contentHeight - topHeight
+
+	// ── Build the Left Panes ────────────────────────────────────────────
+	var leftPane string
+	if m.state == stateInCall {
+		info := fmt.Sprintf("\n  %s\n", st.Info.Render(m.peerName))
+		info += st.Dim.Render("\n  Navigation disabled\n  during active session.")
+		leftPane = m.wrapWithTitle(info, "In Call", sidebarWidth, contentHeight)
+	} else {
+		contactsPane := m.wrapWithTitle(m.renderContactsPane(), "Contacts", sidebarWidth, topHeight)
+		onlinePane := m.wrapWithTitle(m.renderOnlinePane(), "Online", sidebarWidth, bottomHeight)
+		leftPane = lipgloss.JoinVertical(lipgloss.Top, contactsPane, onlinePane)
 	}
 
-	sidebarHeight := m.WindowHeight - 4
-	if sidebarHeight < 10 {
-		sidebarHeight = 10
-	}
-
-	leftPane := st.Sidebar.Width(sidebarWidth).Height(sidebarHeight).Render(m.renderSidebar())
-
+	// ── Build the Main Pane ─────────────────────────────────────────────
 	nowStr := time.Now().Format("02 Jan 2006")
 	headerText := fmt.Sprintf("%s   %s", config.Get().Username, nowStr)
-	headerRendered := lipgloss.NewStyle().Width(mainWidth - 2).Align(lipgloss.Right).Foreground(st.Info.GetForeground()).Render(headerText)
 
-	mainContent := headerRendered + "\n" + m.renderMainPane()
+	mainContentRaw := m.renderMainPane(mainInnerWidth)
 
-	var rightPane string
+	var rightPaneContent string
 	if m.debug {
-		divider := st.Dim.Render(strings.Repeat("─", mainWidth-2))
+		mainContentHeight := lipgloss.Height(mainContentRaw)
+		maxLogLines := innerAvailableHeight - mainContentHeight - 1 // 1 for divider
 
-		mainContentHeight := lipgloss.Height(mainContent)
-		maxLogLines := sidebarHeight - mainContentHeight - 2
-		if maxLogLines < 0 {
-			maxLogLines = 0
+		if maxLogLines > 0 {
+			divider := st.Dim.Render(strings.Repeat("─", mainInnerWidth))
+			logsContent := m.renderLogs(maxLogLines, mainInnerWidth)
+
+			logsBlock := divider
+			if logsContent != "" {
+				logsBlock += "\n" + logsContent
+			}
+			rightPaneContent = lipgloss.JoinVertical(lipgloss.Top, mainContentRaw, logsBlock)
+		} else {
+			// Window too short to show debug logs without breaking UI
+			rightPaneContent = mainContentRaw
 		}
-
-		logsContent := m.renderLogs(maxLogLines, mainWidth-2)
-		logsBlock := divider
-		if logsContent != "" {
-			logsBlock += "\n" + logsContent
-		}
-
-		logsHeight := lipgloss.Height(logsBlock)
-		topBlockHeight := sidebarHeight - logsHeight
-		if topBlockHeight < 0 {
-			topBlockHeight = 0
-		}
-
-		topPane := lipgloss.NewStyle().Width(mainWidth - 2).Height(topBlockHeight).Render(mainContent)
-		rightPane = st.Main.Width(mainWidth).Height(sidebarHeight).Render(
-			lipgloss.JoinVertical(lipgloss.Top, topPane, logsBlock),
-		)
 	} else {
-		rightPane = st.Main.Width(mainWidth).Height(sidebarHeight).Render(mainContent)
+		rightPaneContent = mainContentRaw
 	}
 
-	split := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
-	full := st.Border.Render(split)
+	mainTitle := fmt.Sprintf("Main [ %s ]", headerText)
+	rightPane := m.wrapWithTitle(rightPaneContent, mainTitle, mainWidth, contentHeight)
 
-	keysStr := " [S] settings  [R] reload  [Q] quit"
+	// ── Join Everything (with a clean 2-space gap) ──────────────────────
+	split := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, "  ", rightPane)
+
+	// Shortened the keys list to prevent terminal width wrapping
+	keysStr := "  [up/down] select  [Enter] connect  [P] paste id  [S] set  [Q] quit"
 	if m.state == stateInCall {
-		keysStr = "  [D] debug  [Q] quit"
+		keysStr = "  [M] mute  [V] video  [D] debug  [Q] quit"
 	} else if m.state == stateBrowsing && m.manualDialMode {
-		keysStr = " [Paste] peer id  [Enter] connect  [Esc] cancel  [Q] quit"
+		keysStr = "  [Paste] peer id  [Enter] connect  [Esc] cancel  [Q] quit"
 	}
+
+	// Shortened the Peer ID to 8 chars to prevent terminal width wrapping
 	ioStr := "System Default  "
 	if m.h != nil {
-		ioStr = fmt.Sprintf("Peer ID: %s ", m.h.ID().String())
+		peerID := m.h.ID().String()
+		if len(peerID) > 8 {
+			peerID = peerID[len(peerID)-8:]
+		}
+		ioStr = fmt.Sprintf("Peer ID: %s  ", peerID)
 	}
 
-	footerWidth := lipgloss.Width(full)
+	footerWidth := m.WindowWidth // Use absolute window width for math
 	footerStyle := st.Info.Copy().Bold(true)
 	keysRendered := footerStyle.Render(keysStr)
 	ioRendered := footerStyle.Render(ioStr)
@@ -360,5 +461,5 @@ func (m Model) View() string {
 
 	footer := keysRendered + strings.Repeat(" ", padLen) + ioRendered
 
-	return "\n" + full + "\n" + footer
+	return "\n" + split + "\n" + footer
 }
