@@ -126,7 +126,7 @@ func (m Model) wrapWithTitle(content string, title string, width int, height int
 	left := borderStyle.Render(leftStr)
 	mid := titleStyle.Render(midStr)
 
-	remLen := actualWidth - lipgloss.Width(leftStr) - lipgloss.Width(midStr) - 1 // 1 for the '┓'
+	remLen := actualWidth - lipgloss.Width(leftStr) - lipgloss.Width(midStr) - 1
 	if remLen < 0 {
 		remLen = 0
 	}
@@ -158,7 +158,7 @@ func (m Model) renderContactsPane() string {
 			}
 		}
 
-		if m.cursor == i {
+		if m.focusedPane == paneContacts && m.cursor == i {
 			rawStatus := "[!]"
 			if m.isOnline(c.PeerID) {
 				rawStatus = "[O]"
@@ -191,7 +191,7 @@ func (m Model) renderOnlinePane() string {
 
 	for i, u := range filtered {
 		idx := contactsLen + i
-		if m.cursor == idx {
+		if m.focusedPane == paneOnline && m.cursor == idx {
 			rowText := fmt.Sprintf("[O] %s", u.Username)
 			if len(rowText) > 26 {
 				rowText = rowText[:26]
@@ -206,7 +206,7 @@ func (m Model) renderOnlinePane() string {
 	for i, p := range m.newPeers {
 		idx := localOffset + i
 		displayName := m.peerDisplayName(p.ID)
-		if m.cursor == idx {
+		if m.focusedPane == paneOnline && m.cursor == idx {
 			if len(displayName) > 26 {
 				displayName = displayName[:26]
 			}
@@ -391,18 +391,8 @@ func (m Model) View() string {
 		info += st.Dim.Render("\n  Navigation disabled\n  during active session.")
 		leftPane = m.wrapWithTitle(info, "In Call", sidebarWidth, contentHeight, false)
 	} else {
-		isContactsActive := false
-		isOnlineActive := false
-
-		if m.focusedPane == paneSidebar {
-			if len(m.contacts) == 0 && m.totalItems() == 0 {
-				isContactsActive = true 
-			} else if m.cursor < len(m.contacts) {
-				isContactsActive = true 
-			} else {
-				isOnlineActive = true   
-			}
-		}
+		isContactsActive := m.focusedPane == paneContacts
+		isOnlineActive := m.focusedPane == paneOnline
 
 		contactsPane := m.wrapWithTitle(m.renderContactsPane(), "Contacts", sidebarWidth, topHeight, isContactsActive)
 		onlinePane := m.wrapWithTitle(m.renderOnlinePane(), "Online", sidebarWidth, bottomHeight, isOnlineActive)
@@ -440,7 +430,7 @@ func (m Model) View() string {
 
 	split := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, "  ", rightPane)
 
-	keysStr := "  [Tab] focus  [↑↓] select  [Enter] connect  [S] settings  [Q] quit"
+	keysStr := "  [Tab] cycle panes  [↑↓] select  [Enter] connect  [S] settings  [Q] quit"
 	if m.state == stateInCall {
 		keysStr = "  [M] mute  [V] video  [D] debug  [Q] quit"
 	}

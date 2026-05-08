@@ -29,7 +29,8 @@ const (
 type focusPane int
 
 const (
-	paneSidebar focusPane = iota
+	paneContacts focusPane = iota
+	paneOnline
 	paneMain
 )
 
@@ -128,7 +129,7 @@ func NewModel(cfg ModelConfig) Model {
 
 	return Model{
 		state:         stateBrowsing,
-		focusedPane:   paneSidebar,
+		focusedPane:   paneContacts,
 		h:             cfg.Host,
 		peers:         make([]peer.AddrInfo, 0),
 		newPeers:      make([]peer.AddrInfo, 0),
@@ -217,11 +218,21 @@ func (m *Model) updateNewPeers() {
 }
 
 func (m *Model) clampCursor() {
-	total := m.totalItems()
-	if total == 0 {
-		m.cursor = 0
-	} else if m.cursor >= total {
-		m.cursor = total - 1
+	if m.focusedPane == paneContacts {
+		if m.cursor >= len(m.contacts) {
+			m.cursor = len(m.contacts) - 1
+		}
+		if m.cursor < 0 {
+			m.cursor = 0
+		}
+	} else if m.focusedPane == paneOnline {
+		total := m.totalItems()
+		if m.cursor >= total {
+			m.cursor = total - 1
+		}
+		if m.cursor < len(m.contacts) {
+			m.cursor = len(m.contacts)
+		}
 	}
 }
 
@@ -279,10 +290,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case stateBrowsing:
 			switch msg.String() {
 			case "tab":
-				if m.focusedPane == paneSidebar {
-					m.focusedPane = paneMain
-				} else {
-					m.focusedPane = paneSidebar
+				m.focusedPane = (m.focusedPane + 1) % 3
+				if m.focusedPane == paneContacts {
+					m.cursor = 0
+				} else if m.focusedPane == paneOnline {
+					m.cursor = len(m.contacts)
 				}
 
 			case "s", "S":
@@ -299,17 +311,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = "Peer list cleared (waiting for discovery...)"
 
 			case "up", "k":
-				if m.focusedPane == paneSidebar && m.cursor > 0 {
+				if m.focusedPane == paneContacts && m.cursor > 0 {
+					m.cursor--
+				} else if m.focusedPane == paneOnline && m.cursor > len(m.contacts) {
 					m.cursor--
 				}
 
 			case "down", "j":
-				if m.focusedPane == paneSidebar && m.cursor < m.totalItems()-1 {
+				if m.focusedPane == paneContacts && m.cursor < len(m.contacts)-1 {
+					m.cursor++
+				} else if m.focusedPane == paneOnline && m.cursor < m.totalItems()-1 {
 					m.cursor++
 				}
 
 			case "x", "X", "delete", "backspace":
-				if m.focusedPane == paneSidebar {
+				if m.focusedPane == paneContacts {
 					if m.cursor < len(m.contacts) && len(m.contacts) > 0 {
 						removed := m.contacts[m.cursor]
 						if m.removeCb != nil {
@@ -317,6 +333,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 						m.contacts = append(m.contacts[:m.cursor], m.contacts[m.cursor+1:]...)
 						m.updateNewPeers()
+						if m.cursor >= len(m.contacts) && m.cursor > 0 {
+							m.cursor--
+						}
 						if removed.Name != "" {
 							m.statusMsg = "Removed contact: " + removed.Name
 						} else {
@@ -326,7 +345,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 			case "enter", " ":
-				if m.focusedPane == paneSidebar && m.totalItems() > 0 {
+				if m.focusedPane == paneContacts {
+					if len(m.contacts) == 0 {
+						break
+					}
+				} else if m.focusedPane == paneOnline {
+					if m.totalItems()-len(m.contacts) == 0 {
+						break
+					}
+				} else {
+					break // paneMain doesn't dial on enter
+				}
+
+				if m.totalItems() > 0 {
 					var selectedID, selectedName string
 					filtered := m.filteredLobbyUsers()
 					contactsLen := len(m.contacts)
