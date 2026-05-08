@@ -436,7 +436,7 @@ func (m Model) View() string {
 		maxLogLines := innerAvailableHeight - mainContentHeight - 1 // 1 for divider
 
 		if maxLogLines > 0 {
-			divider := st.Dim.Render(strings.Repeat("─", mainInnerWidth))
+			divider := st.Dim.Render(strings.Repeat("─", mainInnerWidth-2))
 			logsContent := m.renderLogs(maxLogLines, mainInnerWidth)
 
 			logsBlock := divider
