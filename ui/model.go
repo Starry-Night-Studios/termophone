@@ -27,21 +27,22 @@ const (
 )
 
 type ModelConfig struct {
-	Host      host.Host
-	PeerCh    <-chan peer.AddrInfo
-	StreamCh  <-chan network.Stream
-	LogCh     <-chan string
-	AudioCh   <-chan MsgAudioLevel
-	StatsCh   <-chan MsgStats
-	ConnectCh <-chan MsgPeerConnected
-	DisconnCh <-chan MsgPeerDisconnected
-	StatusCh  <-chan string
-	Muted     *atomic.Bool
-	Contacts  []config.Contact
-	DialCb    func(string) error
-	AcceptCb  func(network.Stream) error
-	SaveCb    func(config.Contact)
-	RemoveCb  func(string)
+	Host         host.Host
+	PeerCh       <-chan peer.AddrInfo
+	StreamCh     <-chan network.Stream
+	LogCh        <-chan string
+	AudioCh      <-chan MsgAudioLevel
+	StatsCh      <-chan MsgStats
+	ConnectCh    <-chan MsgPeerConnected
+	DisconnCh    <-chan MsgPeerDisconnected
+	StatusCh     <-chan string
+	LobbyUsersCh <-chan MsgLobbyUsers
+	Muted        *atomic.Bool
+	Contacts     []config.Contact
+	DialCb       func(string) error
+	AcceptCb     func(network.Stream) error
+	SaveCb       func(config.Contact)
+	RemoveCb     func(string)
 }
 
 type Model struct {
@@ -50,10 +51,12 @@ type Model struct {
 
 	peers          []peer.AddrInfo
 	newPeers       []peer.AddrInfo
+	lobbyUsers     []LobbyUser
 	contacts       []config.Contact
 	cursor         int
 	updateCh       <-chan peer.AddrInfo
 	streamCh       <-chan network.Stream
+	lobbyUsersCh   <-chan MsgLobbyUsers
 	incomingStream network.Stream
 	selected       *peer.AddrInfo
 
@@ -79,6 +82,7 @@ type Model struct {
 	settingsCursor int
 	usernameInput  textinput.Model
 	peerIDInput    textinput.Model
+	lobbyInput     textinput.Model
 	manualDialMode bool
 	colorScheme    int
 	screenQuality  string
@@ -101,6 +105,7 @@ type Model struct {
 
 func NewModel(cfg ModelConfig) Model {
 	appCfg := config.Get()
+
 	ti := textinput.New()
 	ti.Placeholder = "Enter new username..."
 	ti.SetValue(appCfg.Username)
@@ -110,14 +115,21 @@ func NewModel(cfg ModelConfig) Model {
 	peerTI.Placeholder = "Paste peer ID (12D3Koo...)"
 	peerTI.CharLimit = 128
 
+	lobbyTI := textinput.New()
+	lobbyTI.Placeholder = "ws://localhost:8080/ws"
+	lobbyTI.CharLimit = 128
+	lobbyTI.SetValue(appCfg.LobbyServer)
+
 	return Model{
 		state:         stateBrowsing,
 		h:             cfg.Host,
 		peers:         make([]peer.AddrInfo, 0),
 		newPeers:      make([]peer.AddrInfo, 0),
+		lobbyUsers:    make([]LobbyUser, 0),
 		contacts:      cfg.Contacts,
 		updateCh:      cfg.PeerCh,
 		streamCh:      cfg.StreamCh,
+		lobbyUsersCh:  cfg.LobbyUsersCh,
 		logCh:         cfg.LogCh,
 		audioCh:       cfg.AudioCh,
 		statsCh:       cfg.StatsCh,
@@ -133,6 +145,7 @@ func NewModel(cfg ModelConfig) Model {
 		debug:         false,
 		usernameInput: ti,
 		peerIDInput:   peerTI,
+		lobbyInput:    lobbyTI,
 		colorScheme:   appCfg.ColorScheme,
 		screenQuality: appCfg.ScreenQuality,
 	}
@@ -167,6 +180,18 @@ func drain[T any](ch <-chan T) []T {
 	}
 }
 
+// filteredLobbyUsers returns lobby users excluding ourself.
+func (m Model) filteredLobbyUsers() []LobbyUser {
+	myUsername := config.Get().Username
+	var out []LobbyUser
+	for _, u := range m.lobbyUsers {
+		if u.Username != myUsername {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
 func (m *Model) updateNewPeers() {
 	m.newPeers = make([]peer.AddrInfo, 0)
 	for _, p := range m.peers {
@@ -181,17 +206,21 @@ func (m *Model) updateNewPeers() {
 			m.newPeers = append(m.newPeers, p)
 		}
 	}
+	m.clampCursor()
+}
 
-	total := len(m.contacts) + len(m.newPeers)
-	if m.cursor >= total && total > 0 {
-		m.cursor = total - 1
-	} else if total == 0 {
+// clampCursor ensures the cursor stays within valid bounds.
+func (m *Model) clampCursor() {
+	total := m.totalItems()
+	if total == 0 {
 		m.cursor = 0
+	} else if m.cursor >= total {
+		m.cursor = total - 1
 	}
 }
 
 func (m Model) totalItems() int {
-	return len(m.contacts) + len(m.newPeers)
+	return len(m.contacts) + len(m.filteredLobbyUsers()) + len(m.newPeers)
 }
 
 func (m Model) isOnline(peerID string) bool {
@@ -209,6 +238,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// ── Global shortcuts (work in any state) ──────────────────────
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
@@ -238,7 +268,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.debug = !m.debug
 		}
 
-		if m.state == stateBrowsing {
+		// ── State-specific key handling ───────────────────────────────
+		switch m.state {
+		case stateBrowsing:
 			if m.manualDialMode {
 				switch msg.String() {
 				case "esc":
@@ -263,32 +295,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.peerIDInput, cmd = m.peerIDInput.Update(msg)
 					cmds = append(cmds, cmd)
 				}
-				break
+				break // exit switch m.state — don't handle normal browse keys
 			}
 
 			switch msg.String() {
 			case "s", "S":
 				m.state = stateSettings
-				m.usernameInput.Focus()
 				m.settingsCursor = 0
+				m.usernameInput.Focus()
+				m.lobbyInput.Blur()
 				skipSettingsInputUpdate = true
+
 			case "p", "P":
 				m.manualDialMode = true
 				m.peerIDInput.Focus()
 				m.peerIDInput.SetValue("")
+
 			case "r", "R":
 				m.peers = nil
 				m.newPeers = nil
 				m.updateNewPeers()
 				m.statusMsg = "Peer list cleared (waiting for discovery...)"
+
 			case "up", "k":
 				if m.cursor > 0 {
 					m.cursor--
 				}
+
 			case "down", "j":
 				if m.cursor < m.totalItems()-1 {
 					m.cursor++
 				}
+
 			case "x", "X", "delete", "backspace":
 				if m.cursor < len(m.contacts) && len(m.contacts) > 0 {
 					removed := m.contacts[m.cursor]
@@ -297,29 +335,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.contacts = append(m.contacts[:m.cursor], m.contacts[m.cursor+1:]...)
 					m.updateNewPeers()
-					if m.cursor >= m.totalItems() && m.cursor > 0 {
-						m.cursor--
-					}
 					if removed.Name != "" {
 						m.statusMsg = "Removed contact: " + removed.Name
 					} else {
 						m.statusMsg = "Removed contact"
 					}
 				}
+
 			case "enter", " ":
 				if m.totalItems() > 0 {
-					var selectedID string
-					var selectedName string
-					if m.cursor < len(m.contacts) {
+					var selectedID, selectedName string
+					filtered := m.filteredLobbyUsers()
+					contactsLen := len(m.contacts)
+					lobbyLen := len(filtered)
+
+					switch {
+					case m.cursor < contactsLen:
+						// Contact selected
 						selectedID = m.contacts[m.cursor].PeerID
 						selectedName = m.contacts[m.cursor].Name
-					} else {
-						idx := m.cursor - len(m.contacts)
+
+					case m.cursor < contactsLen+lobbyLen:
+						// Lobby user selected — use username as the dial ID
+						u := filtered[m.cursor-contactsLen]
+						selectedID = u.Username
+						selectedName = u.Username
+
+					default:
+						// mDNS new peer selected
+						idx := m.cursor - contactsLen - lobbyLen
 						if idx >= 0 && idx < len(m.newPeers) {
 							selectedID = m.newPeers[idx].ID.String()
 							selectedName = m.peerDisplayName(m.newPeers[idx].ID)
 						}
 					}
+
 					if selectedID != "" {
 						if selectedName == "" {
 							selectedName = selectedID
@@ -331,7 +381,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
-		} else if m.state == stateIncoming {
+
+		case stateIncoming:
 			switch msg.String() {
 			case "y", "Y", "enter":
 				if m.acceptCb != nil {
@@ -350,12 +401,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = "Connection declined"
 				m.state = stateBrowsing
 			}
-		} else if m.state == statePostCall {
+
+		case statePostCall:
 			if msg.String() == "s" || msg.String() == "S" {
 				if m.saveCb != nil && m.lastPeerID != "" {
 					newContact := config.Contact{Name: m.lastPeerName, PeerID: m.lastPeerID}
 					m.saveCb(newContact)
-
 					exists := false
 					for _, c := range m.contacts {
 						if c.PeerID == m.lastPeerID {
@@ -368,11 +419,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.updateNewPeers()
 					}
 				}
-				m.state = stateBrowsing
-			} else {
-				m.state = stateBrowsing
 			}
-		} else if m.state == stateSettings {
+			m.state = stateBrowsing
+
+		case stateSettings:
 			switch msg.String() {
 			case "esc":
 				m.state = stateBrowsing
@@ -381,7 +431,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.settingsCursor--
 				}
 			case "down":
-				if m.settingsCursor < 2 {
+				if m.settingsCursor < 3 {
 					m.settingsCursor++
 				}
 			case "left":
@@ -390,6 +440,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else if m.settingsCursor == 2 {
 					m.screenQuality = previousQuality(m.screenQuality)
 				}
+				// row 0 (username) and row 3 (lobby URL) are text inputs — no left/right
 			case "right":
 				if m.settingsCursor == 1 {
 					m.colorScheme = (m.colorScheme + 1) % len(themes)
@@ -401,15 +452,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cfg.Username = m.usernameInput.Value()
 				cfg.ColorScheme = m.colorScheme
 				cfg.ScreenQuality = m.screenQuality
-				config.SaveConfig() // we will add this func
+				cfg.LobbyServer = m.lobbyInput.Value()
+				config.SaveConfig()
 				m.state = stateBrowsing
 			}
 
-			if m.state == stateSettings { // if we haven't exited
+			// Manage focus after cursor movement (only if still in settings)
+			if m.state == stateSettings {
 				if m.settingsCursor == 0 {
 					m.usernameInput.Focus()
+					m.lobbyInput.Blur()
+				} else if m.settingsCursor == 3 {
+					m.lobbyInput.Focus()
+					m.usernameInput.Blur()
 				} else {
 					m.usernameInput.Blur()
+					m.lobbyInput.Blur()
 				}
 			}
 		}
@@ -417,6 +475,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case MsgTick:
 		cmds = append(cmds, tickCmd())
 
+		// mDNS peer updates
 		for _, p := range drain(m.updateCh) {
 			exists := false
 			for _, ep := range m.peers {
@@ -431,6 +490,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Lobby user list updates
+		if m.lobbyUsersCh != nil {
+			for _, lu := range drain(m.lobbyUsersCh) {
+				m.lobbyUsers = lu.Users
+				m.clampCursor()
+			}
+		}
+
+		// Incoming libp2p streams
 		for _, s := range drain(m.streamCh) {
 			if m.state == stateBrowsing {
 				m.incomingStream = s
@@ -506,14 +574,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.WindowHeight = msg.Height
 	}
 
+	// Forward keypresses to the active text input in settings
 	if m.state == stateSettings && !skipSettingsInputUpdate {
 		var cmd tea.Cmd
-		m.usernameInput, cmd = m.usernameInput.Update(msg)
-		cmds = append(cmds, cmd)
+		if m.settingsCursor == 0 {
+			m.usernameInput, cmd = m.usernameInput.Update(msg)
+			cmds = append(cmds, cmd)
+		} else if m.settingsCursor == 3 {
+			m.lobbyInput, cmd = m.lobbyInput.Update(msg)
+			cmds = append(cmds, cmd)
+		}
 	}
 
 	return m, tea.Batch(cmds...)
 }
+
 func (m Model) Cursor() int { return m.cursor }
 
 func previousQuality(current string) string {

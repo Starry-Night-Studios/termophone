@@ -8,6 +8,7 @@ require (
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/hraban/opus v0.0.0-20251117090126-c76ea7e21bf3
 	github.com/libp2p/go-libp2p v0.48.0
 )
@@ -34,7 +35,6 @@ require (
 	github.com/filecoin-project/go-clock v0.1.0 // indirect
 	github.com/flynn/noise v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
 	github.com/ipfs/go-cid v0.6.0 // indirect
 	github.com/jackpal/go-nat-pmp v1.0.2 // indirect

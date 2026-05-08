@@ -67,6 +67,7 @@ func (m Model) renderSidebar() string {
 		return b.String()
 	}
 
+	// ── CONTACTS ────────────────────────────────────────────────────
 	b.WriteString(st.Info.Render(" CONTACTS") + "\n")
 	for i, c := range m.contacts {
 		status := st.Offline.Render("[!]")
@@ -89,7 +90,6 @@ func (m Model) renderSidebar() string {
 				rawStatus = "[O]"
 			}
 			rowText := fmt.Sprintf("  %s %s", rawStatus, name)
-
 			if len(rowText) > 26 {
 				rowText = rowText[:26]
 			}
@@ -99,22 +99,45 @@ func (m Model) renderSidebar() string {
 		}
 	}
 
-	b.WriteString("\n" + st.Info.Render(" NEW PEERS") + "\n")
-	offset := len(m.contacts)
-	for i, p := range m.newPeers {
-		displayName := m.peerDisplayName(p.ID)
-		if m.cursor == offset+i {
-			rowText := fmt.Sprintf("  %s", displayName)
+	// ── ONLINE (lobby users) ─────────────────────────────────────────
+	filtered := m.filteredLobbyUsers()
+	b.WriteString("\n" + st.Info.Render(" ONLINE") + "\n")
+	contactsLen := len(m.contacts)
+	for i, u := range filtered {
+		idx := contactsLen + i
+		if m.cursor == idx {
+			rowText := fmt.Sprintf("  [O] %s", u.Username)
 			if len(rowText) > 26 {
 				rowText = rowText[:26]
 			}
 			b.WriteString(st.Selected.Render(rowText) + "\n")
 		} else {
-			b.WriteString(fmt.Sprintf("  %s\n", displayName))
+			b.WriteString(fmt.Sprintf("  %s %s\n", st.Online.Render("[O]"), u.Username))
+		}
+	}
+	if len(filtered) == 0 {
+		b.WriteString(st.Dim.Render("  (lobby offline)\n"))
+	}
+
+	// ── LOCAL (mDNS peers) ───────────────────────────────────────────
+	if len(m.newPeers) > 0 {
+		b.WriteString("\n" + st.Info.Render(" LOCAL") + "\n")
+		localOffset := contactsLen + len(filtered)
+		for i, p := range m.newPeers {
+			displayName := m.peerDisplayName(p.ID)
+			if m.cursor == localOffset+i {
+				rowText := fmt.Sprintf("  %s", displayName)
+				if len(rowText) > 26 {
+					rowText = rowText[:26]
+				}
+				b.WriteString(st.Selected.Render(rowText) + "\n")
+			} else {
+				b.WriteString(fmt.Sprintf("  %s\n", displayName))
+			}
 		}
 	}
 
-	if len(m.contacts) == 0 && len(m.newPeers) == 0 {
+	if len(m.contacts) == 0 && len(filtered) == 0 && len(m.newPeers) == 0 {
 		b.WriteString(st.Dim.Render("  (empty)"))
 	}
 
@@ -143,25 +166,19 @@ func (m Model) renderMainPane() string {
 		usrStr := fmt.Sprintf("Username : %s", m.usernameInput.View())
 		colStr := fmt.Sprintf("Theme    : < %s >", scm)
 		qStr := fmt.Sprintf("Quality  : < %s >", qualityLabel)
+		lobbyStr := fmt.Sprintf("Lobby    : %s", m.lobbyInput.View())
 
-		// Create a specific selection style for settings
 		settingsSelected := st.Selected.Copy().Width(40).PaddingLeft(6)
 
-		if m.settingsCursor == 0 {
-			b.WriteString(settingsSelected.Render(usrStr) + "\n\n")
-			b.WriteString("      " + colStr + "\n\n")
-			b.WriteString("      " + qStr + "\n\n")
-		} else if m.settingsCursor == 1 {
-			b.WriteString("      " + usrStr + "\n\n")
-			b.WriteString(settingsSelected.Render(colStr) + "\n\n")
-			b.WriteString("      " + qStr + "\n\n")
-		} else {
-			b.WriteString("      " + usrStr + "\n\n")
-			b.WriteString("      " + colStr + "\n\n")
-			b.WriteString(settingsSelected.Render(qStr) + "\n\n")
+		for i, row := range []string{usrStr, colStr, qStr, lobbyStr} {
+			if m.settingsCursor == i {
+				b.WriteString(settingsSelected.Render(row) + "\n\n")
+			} else {
+				b.WriteString("      " + row + "\n\n")
+			}
 		}
 
-		b.WriteString("\n      [Esc] cancel   [Enter] save\n      [Left/Right] change value\n")
+		b.WriteString("\n      [Esc] cancel   [Enter] save\n      [Left/Right] change theme/quality\n")
 
 	case stateBrowsing:
 		b.WriteString("\n      Not connected.\n")
@@ -175,12 +192,15 @@ func (m Model) renderMainPane() string {
 		if m.statusMsg != "" {
 			b.WriteString(fmt.Sprintf("\n      %s\n", st.Info.Render(m.statusMsg)))
 		}
+
 	case statePostCall:
 		b.WriteString(fmt.Sprintf("\n      Session ended.\n\n      Unsaved peer: %s\n      Press [S] to save contact,\n      or any key to return.\n", m.lastPeerName))
+
 	case stateIncoming:
 		remoteID := m.incomingStream.Conn().RemotePeer()
 		displayName := m.peerDisplayName(remoteID)
 		b.WriteString(fmt.Sprintf("\n      Incoming connection :\n      %s\n\n      [Y] accept   [N] reject\n", displayName))
+
 	case stateInCall:
 		elapsed := time.Since(m.callStart).Round(time.Second)
 		durStr := fmt.Sprintf("%02d:%02d:%02d", int(elapsed.Hours()), int(elapsed.Minutes())%60, int(elapsed.Seconds())%60)
@@ -269,7 +289,6 @@ func (m Model) View() string {
 
 	nowStr := time.Now().Format("02 Jan 2006")
 	headerText := fmt.Sprintf("%s   %s", config.Get().Username, nowStr)
-	// st.Main has padding of 1 on left and right, so the inner width is mainWidth - 2
 	headerRendered := lipgloss.NewStyle().Width(mainWidth - 2).Align(lipgloss.Right).Foreground(st.Info.GetForeground()).Render(headerText)
 
 	mainContent := headerRendered + "\n" + m.renderMainPane()
@@ -278,9 +297,8 @@ func (m Model) View() string {
 	if m.debug {
 		divider := st.Dim.Render(strings.Repeat("─", mainWidth-2))
 
-		// Ensure we don't overflow the UI height by displaying infinite logs
 		mainContentHeight := lipgloss.Height(mainContent)
-		maxLogLines := sidebarHeight - mainContentHeight - 2 // -2 for the divider and spacer
+		maxLogLines := sidebarHeight - mainContentHeight - 2
 		if maxLogLines < 0 {
 			maxLogLines = 0
 		}
@@ -319,7 +337,6 @@ func (m Model) View() string {
 		ioStr = fmt.Sprintf("Peer ID: %s  ", m.h.ID().String())
 	}
 
-	// Create a responsive footer that aligns the IO text to the right
 	footerWidth := lipgloss.Width(full)
 	footerStyle := st.Info.Copy().Bold(true)
 	keysRendered := footerStyle.Render(keysStr)

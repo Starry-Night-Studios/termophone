@@ -4,13 +4,12 @@ import (
 	"encoding/binary"
 	"io"
 	"log"
-
-	"github.com/libp2p/go-libp2p/core/network"
 )
 
-// Writer takes the compressed Opus frames from the pipeline and sends them over the p2p stream
-func Writer(stream network.Stream, sendCh <-chan []byte) {
-	defer stream.Close()
+// Writer takes compressed Opus frames from the pipeline and sends them over
+// any ReadWriteCloser (libp2p stream or relay WebSocket wrapper).
+func Writer(rwc io.ReadWriteCloser, sendCh <-chan []byte) {
+	defer rwc.Close()
 	var seq uint16
 
 	for chunk := range sendCh {
@@ -20,21 +19,21 @@ func Writer(stream network.Stream, sendCh <-chan []byte) {
 		seq++
 		copy(frame[6:], chunk)
 
-		if _, err := stream.Write(frame); err != nil {
+		if _, err := rwc.Write(frame); err != nil {
 			log.Println("P2P stream write error:", err)
 			return
 		}
 	}
 }
 
-// Reader pulls binary from the p2p stream and pushes Opus frames to the receive pipeline
-func Reader(stream network.Stream, recvCh chan<- []byte) {
-	defer stream.Close()
+// Reader pulls binary from the connection and pushes Opus frames to the receive pipeline.
+func Reader(rwc io.ReadWriteCloser, recvCh chan<- []byte) {
+	defer rwc.Close()
 	defer close(recvCh)
 	header := make([]byte, 6) // length (4) + seq (2)
 
 	for {
-		if _, err := io.ReadFull(stream, header); err != nil {
+		if _, err := io.ReadFull(rwc, header); err != nil {
 			if err != io.EOF {
 				log.Println("P2P stream read error:", err)
 			}
@@ -56,8 +55,8 @@ func Reader(stream network.Stream, recvCh chan<- []byte) {
 		// Put the sequence number at the start
 		copy(frame[0:2], header[4:6])
 
-		// Read the payload DIRECTLY from the stream into the rest of the frame
-		if _, err := io.ReadFull(stream, frame[2:]); err != nil {
+		// Read the payload directly from the connection into the rest of the frame
+		if _, err := io.ReadFull(rwc, frame[2:]); err != nil {
 			log.Println("P2P stream payload read error:", err)
 			return
 		}

@@ -18,6 +18,7 @@ type Config struct {
 	AECTrimOffsetMs int       `json:"aec_trim_offset_ms"`
 	ColorScheme     int       `json:"color_scheme"`
 	ScreenQuality   string    `json:"screen_quality"`
+	LobbyServer     string    `json:"lobby_server"`
 }
 
 var (
@@ -47,11 +48,16 @@ func Get() *Config {
 		AECTrimOffsetMs: 120, // Default hardware delay offset
 		ColorScheme:     0,
 		ScreenQuality:   "medium",
+		LobbyServer:     "ws://localhost:8080/ws",
 	}
 	file, err := os.Open(path)
 	if err == nil {
 		json.NewDecoder(file).Decode(current)
 		file.Close()
+		// If LobbyServer is missing (old config), set default
+		if current.LobbyServer == "" {
+			current.LobbyServer = "ws://localhost:8080/ws"
+		}
 	} else {
 		// Just write default, no more mapping old .termophone.json paths!
 		writeToDisk(current)

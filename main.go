@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"strings"
@@ -17,9 +18,13 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gen2brain/malgo"
+	"github.com/gorilla/websocket"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 )
+
+// ── Logging bridge ────────────────────────────────────────────────────────────
 
 type chanWriter chan string
 
@@ -32,18 +37,75 @@ func (cw chanWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// ── WebSocket relay stream wrapper ────────────────────────────────────────────
+
+// wsReadWriter wraps a WebSocket connection as an io.ReadWriteCloser so it can
+// be passed directly to vnet.Writer / vnet.Reader, which work with any RWC.
+// WebSocket is message-framed, so we buffer leftover bytes from each message.
+type wsReadWriter struct {
+	conn *websocket.Conn
+	mu   sync.Mutex // guards writes; reads are single-goroutine
+	buf  []byte
+}
+
+func newWsRWC(conn *websocket.Conn) *wsReadWriter {
+	return &wsReadWriter{conn: conn}
+}
+
+func (w *wsReadWriter) Read(p []byte) (int, error) {
+	// Drain any leftover bytes from the previous WebSocket message first.
+	for len(w.buf) == 0 {
+		_, data, err := w.conn.ReadMessage()
+		if err != nil {
+			return 0, err
+		}
+		w.buf = data
+	}
+	n := copy(p, w.buf)
+	w.buf = w.buf[n:]
+	return n, nil
+}
+
+func (w *wsReadWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	// Copy p so the caller can reuse the buffer immediately.
+	frame := make([]byte, len(p))
+	copy(frame, p)
+	if err := w.conn.WriteMessage(websocket.BinaryMessage, frame); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+func (w *wsReadWriter) Close() error {
+	return w.conn.Close()
+}
+
+// ── Peer name helper ──────────────────────────────────────────────────────────
+
+func derivePeerName(h host.Host, pid peer.ID) string {
+	name := pid.String()
+	agent, err := h.Peerstore().Get(pid, "AgentVersion")
+	if err == nil && agent != nil {
+		if str, ok := agent.(string); ok && strings.HasPrefix(str, "termophone/") {
+			return strings.TrimPrefix(str, "termophone/")
+		}
+	}
+	if len(name) > 12 {
+		name = name[len(name)-8:]
+	}
+	return name
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
 func main() {
 	logCh := make(chan string, 32)
 	cw := chanWriter(logCh)
 
-	// Create a native structured JSON logger
-	handler := slog.NewJSONHandler(cw, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	})
-	slogger := slog.New(handler)
-	slog.SetDefault(slogger)
-
-	// Bridge the standard "log" package to output JSON via slog
+	handler := slog.NewJSONHandler(cw, &slog.HandlerOptions{Level: slog.LevelDebug})
+	slog.SetDefault(slog.New(handler))
 	log.SetOutput(cw)
 	log.SetFlags(0)
 
@@ -69,17 +131,23 @@ func main() {
 	connectCh := make(chan ui.MsgPeerConnected, 2)
 	disconnCh := make(chan ui.MsgPeerDisconnected, 2)
 	statusCh := make(chan string, 5)
+	lobbyUsersCh := make(chan ui.MsgLobbyUsers, 4)
+	routingCh := make(chan vnet.RoutingInfo, 2)
+	incomingLobbyCallCh := make(chan vnet.IncomingCall, 4)
 	muted := &atomic.Bool{}
 
-	startAudio := func(stream network.Stream) {
+	// ── startAudio ────────────────────────────────────────────────────────────
+	//
+	// Accepts any io.ReadWriteCloser so it works with both libp2p streams
+	// (direct/LAN) and wsReadWriter (relay). peerName / peerID are shown in
+	// the UI; for relay calls both are the remote username.
+	startAudio := func(rwc io.ReadWriteCloser, peerName, peerID string) {
 		callCtx, callCancel := context.WithCancel(ctx)
 		rawCh := make(chan []byte, 8)
 		sendCh := make(chan []byte, 8)
 		recvCh := make(chan []byte, 16)
 		filteredSendCh := make(chan []byte, 8)
 
-		// Pre-allocated Zero-Allocation audio capture free-list!
-		// 32 frames of buffers allows plenty of headroom for the pipeline.
 		freePool := make(chan []byte, 32)
 		for i := 0; i < 32; i++ {
 			freePool <- make([]byte, audio.FrameBytes)
@@ -112,38 +180,38 @@ func main() {
 			})
 		}
 
-		var err error
-		mctx, err = malgo.InitContext(nil, malgo.ContextConfig{}, func(msg string) {
+		var initErr error
+		mctx, initErr = malgo.InitContext(nil, malgo.ContextConfig{}, func(msg string) {
 			log.Print(msg)
 		})
-		if err != nil {
-			log.Printf("Failed to initialize audio context: %v", err)
+		if initErr != nil {
+			log.Printf("Failed to initialize audio context: %v", initErr)
+			rwc.Close()
 			return
 		}
 
 		rb := audio.NewRingBuffer(1024 * 64)
 
-		capturer, err = audio.NewCapturer(mctx, rawCh, freePool)
-		if err != nil {
-			log.Printf("Failed to initialize capturer: %v", err)
+		capturer, initErr = audio.NewCapturer(mctx, rawCh, freePool)
+		if initErr != nil {
+			log.Printf("Failed to initialize capturer: %v", initErr)
 			notifyDisconnected()
 			return
 		}
-		player, err = audio.NewPlayer(mctx, rb)
-		if err != nil {
-			log.Printf("Failed to initialize player: %v", err)
-			notifyDisconnected()
-			return
-		}
-
-		codec, err := audio.NewCodec()
-		if err != nil {
-			log.Printf("Failed to initialize codec: %v", err)
+		player, initErr = audio.NewPlayer(mctx, rb)
+		if initErr != nil {
+			log.Printf("Failed to initialize player: %v", initErr)
 			notifyDisconnected()
 			return
 		}
 
-		// Fetch aecDelay parameter from config
+		codec, initErr := audio.NewCodec()
+		if initErr != nil {
+			log.Printf("Failed to initialize codec: %v", initErr)
+			notifyDisconnected()
+			return
+		}
+
 		aecDelayMs := config.Get().AECTrimOffsetMs
 
 		go audio.NewPipeline(rawCh, sendCh, rb, aecDelayMs, freePool).Run(callCtx)
@@ -160,6 +228,7 @@ func main() {
 			return
 		}
 
+		// Mute gate: only forward frames to the network when not muted.
 		go func() {
 			for {
 				select {
@@ -173,93 +242,198 @@ func main() {
 						select {
 						case filteredSendCh <- b:
 						default:
-							// drop frame while muted/backpressured
 						}
 					}
 				}
 			}
 		}()
+
 		go func() {
-			vnet.Writer(stream, filteredSendCh)
+			vnet.Writer(rwc, filteredSendCh)
 			notifyDisconnected()
 		}()
 		go func() {
-			vnet.Reader(stream, recvCh)
+			vnet.Reader(rwc, recvCh)
 			notifyDisconnected()
 		}()
 
+		// Heartbeat so the UI duration timer keeps ticking even during silence.
 		go func() {
-			// Throttle to 1 FPS for basic UI state updates (duration timer, etc)
 			ticker := time.NewTicker(time.Second)
 			defer ticker.Stop()
 			for range ticker.C {
 				select {
 				case <-callCtx.Done():
 					return
-				case audioCh <- ui.MsgAudioLevel{Local: 1.0, Peer: 1.0}: // Minimal ping
+				case audioCh <- ui.MsgAudioLevel{Local: 1.0, Peer: 1.0}:
 				default:
 				}
 			}
 		}()
 
-		remoteNamed := stream.Conn().RemotePeer().String()
-		agent, err := h.Peerstore().Get(stream.Conn().RemotePeer(), "AgentVersion")
-		if err == nil && agent != nil {
-			if str, ok := agent.(string); ok && strings.HasPrefix(str, "termophone/") {
-				remoteNamed = strings.TrimPrefix(str, "termophone/")
-			}
-		} else if len(remoteNamed) > 12 {
-			remoteNamed = remoteNamed[len(remoteNamed)-8:]
-		}
-
-		connectCh <- ui.MsgPeerConnected{Name: remoteNamed, ID: stream.Conn().RemotePeer().String()}
-
-		log.Printf("Audio transmission started!")
+		connectCh <- ui.MsgPeerConnected{Name: peerName, ID: peerID}
+		log.Printf("Audio transmission started with %s", peerName)
 	}
 
+	// ── Lobby client setup ───────────────────────────────────────────────────
+	var lobbyClient *vnet.LobbyClient
+	{
+		localIPs := vnet.GetLocalIPs()
+		lc, err := vnet.NewLobbyClient(cfg.LobbyServer, cfg.Username, localIPs)
+		if err != nil {
+			log.Printf("Lobby unavailable (%v) — running in local-only mode", err)
+		} else {
+			lobbyClient = lc
+			defer lobbyClient.Close()
+
+			lobbyClient.OnClients = func(users []vnet.LobbyUser) {
+				out := make([]ui.LobbyUser, len(users))
+				for i, u := range users {
+					out[i] = ui.LobbyUser{Username: u.Username, PublicIP: u.PublicIP}
+				}
+				select {
+				case lobbyUsersCh <- ui.MsgLobbyUsers{Users: out}:
+				default:
+				}
+			}
+
+			lobbyClient.OnRouting = func(r vnet.RoutingInfo) {
+				select {
+				case routingCh <- r:
+				default:
+					log.Println("routingCh full — dropped routing info")
+				}
+			}
+
+			lobbyClient.OnIncoming = func(ic vnet.IncomingCall) {
+				select {
+				case incomingLobbyCallCh <- ic:
+				default:
+					log.Println("incomingLobbyCallCh full — dropped incoming call")
+				}
+			}
+
+			lobbyClient.OnError = func(err error) {
+				log.Printf("Lobby connection error: %v", err)
+			}
+		}
+	}
+
+	// ── Incoming lobby call handler ───────────────────────────────────────────
+	//
+	// Relay calls: we proactively connect to the relay with the session ID so
+	// both sides meet in the middle.
+	// LAN calls: the caller dials us via libp2p; incomingStreamCh handles that
+	// naturally through the existing accept flow.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ic := <-incomingLobbyCallCh:
+				log.Printf("Incoming lobby call from %s via %s", ic.CallerUsername, ic.RouteType)
+				if ic.RouteType == "relay" {
+					go func(ic vnet.IncomingCall) {
+						relayURL := ic.RelayAddress + "?id=" + ic.SessionID
+						wsConn, _, err := websocket.DefaultDialer.Dial(relayURL, nil)
+						if err != nil {
+							log.Printf("Relay connect failed for incoming call: %v", err)
+							return
+						}
+						startAudio(newWsRWC(wsConn), ic.CallerUsername, ic.CallerUsername)
+					}(ic)
+				}
+				// For LAN route: caller connects via libp2p → incomingStreamCh fires.
+			}
+		}
+	}()
+
+	// ── dialCb ───────────────────────────────────────────────────────────────
+	//
+	// id is either:
+	//   • A libp2p peer ID (starts with "12D3" or "Qm") → direct libp2p dial
+	//   • A lobby username → signal via lobby, then connect via relay or LAN
 	dialCb := func(id string) error {
 		log.Printf("Dialing %s...", id)
-		pid, err := peer.Decode(id)
-		if err != nil {
+
+		// ── libp2p direct dial (mDNS / saved contact) ────────────────────────
+		if strings.HasPrefix(id, "12D3") || strings.HasPrefix(id, "Qm") {
+			pid, err := peer.Decode(id)
+			if err != nil {
+				return err
+			}
+
+			p := h.Peerstore().PeerInfo(pid)
+			if len(p.Addrs) == 0 {
+				return fmt.Errorf("no addresses found locally for peer")
+			}
+
+			if err := h.Connect(ctx, p); err != nil {
+				log.Printf("Connect failed: %v", err)
+				statusCh <- "Call failed: Unreachable"
+				return err
+			}
+			stream, err := h.NewStream(ctx, p.ID, vnet.ProtocolID)
+			if err != nil {
+				log.Printf("Stream failed: %v", err)
+				statusCh <- "Call failed: Protocol error / Unreachable"
+				return err
+			}
+
+			// Wait for remote to accept or decline.
+			buf := make([]byte, 1)
+			stream.SetReadDeadline(time.Now().Add(30 * time.Second))
+			n, err := stream.Read(buf)
+			stream.SetReadDeadline(time.Time{})
+			if err != nil || n == 0 || buf[0] != 1 {
+				stream.Reset()
+				statusCh <- "Call declined by peer"
+				return fmt.Errorf("call declined")
+			}
+
+			peerName := derivePeerName(h, p.ID)
+			go startAudio(stream, peerName, p.ID.String())
+			return nil
+		}
+
+		// ── Lobby-based dial (username) ───────────────────────────────────────
+		if lobbyClient == nil {
+			statusCh <- "Lobby not connected"
+			return fmt.Errorf("lobby unavailable")
+		}
+
+		if err := lobbyClient.Call(id); err != nil {
+			statusCh <- "Call signal failed"
 			return err
 		}
 
-		p := h.Peerstore().PeerInfo(pid)
-		if len(p.Addrs) == 0 {
-			return fmt.Errorf("no addresses found locally for peer")
+		// Block until the lobby sends routing info or we time out.
+		select {
+		case routing := <-routingCh:
+			log.Printf("Routing received: type=%s session=%s", routing.RouteType, routing.SessionID)
+
+			relayURL := routing.RelayAddress + "?id=" + routing.SessionID
+			wsConn, _, err := websocket.DefaultDialer.Dial(relayURL, nil)
+			if err != nil {
+				statusCh <- "Relay connection failed"
+				return fmt.Errorf("relay dial: %w", err)
+			}
+			go startAudio(newWsRWC(wsConn), routing.TargetUsername, routing.TargetUsername)
+
+		case <-time.After(30 * time.Second):
+			statusCh <- "Call timed out"
+			return fmt.Errorf("routing timeout")
 		}
 
-		if err := h.Connect(ctx, p); err != nil {
-			log.Printf("Connect failed: %v", err)
-			statusCh <- "Call failed: Unreachable"
-			return err
-		}
-		stream, err := h.NewStream(ctx, p.ID, vnet.ProtocolID)
-		if err != nil {
-			log.Printf("Stream failed: %v", err)
-			statusCh <- "Call failed: Protocol error / Unreachable"
-			return err
-		}
-
-		// Wait for remote to accept or decline the call
-		buf := make([]byte, 1)
-		stream.SetReadDeadline(time.Now().Add(30 * time.Second))
-		n, err := stream.Read(buf)
-		stream.SetReadDeadline(time.Time{})
-
-		if err != nil || n == 0 || buf[0] != 1 {
-			stream.Reset()
-			statusCh <- "Call declined by peer"
-			return fmt.Errorf("call declined")
-		}
-
-		go startAudio(stream)
 		return nil
 	}
 
+	// ── acceptCb (libp2p incoming) ────────────────────────────────────────────
 	acceptCb := func(stream network.Stream) error {
-		log.Printf("Accepted incoming call from %s", stream.Conn().RemotePeer())
-		startAudio(stream)
+		remotePeer := stream.Conn().RemotePeer()
+		peerName := derivePeerName(h, remotePeer)
+		log.Printf("Accepted incoming call from %s", peerName)
+		startAudio(stream, peerName, remotePeer.String())
 		return nil
 	}
 
@@ -271,26 +445,28 @@ func main() {
 		config.RemoveContact(peerID)
 	}
 
+	// ── Build and run the UI ──────────────────────────────────────────────────
 	model := ui.NewModel(ui.ModelConfig{
-		Host:      h,
-		PeerCh:    peerCh,
-		StreamCh:  incomingStreamCh,
-		LogCh:     logCh,
-		AudioCh:   audioCh,
-		StatsCh:   statsCh,
-		ConnectCh: connectCh,
-		DisconnCh: disconnCh,
-		StatusCh:  statusCh,
-		Muted:     muted,
-		Contacts:  cfg.Contacts,
-		DialCb:    dialCb,
-		AcceptCb:  acceptCb,
-		SaveCb:    saveContactCb,
-		RemoveCb:  removeContactCb,
+		Host:         h,
+		PeerCh:       peerCh,
+		StreamCh:     incomingStreamCh,
+		LogCh:        logCh,
+		AudioCh:      audioCh,
+		StatsCh:      statsCh,
+		ConnectCh:    connectCh,
+		DisconnCh:    disconnCh,
+		StatusCh:     statusCh,
+		LobbyUsersCh: lobbyUsersCh,
+		Muted:        muted,
+		Contacts:     cfg.Contacts,
+		DialCb:       dialCb,
+		AcceptCb:     acceptCb,
+		SaveCb:       saveContactCb,
+		RemoveCb:     removeContactCb,
 	})
 
-	p := tea.NewProgram(model, tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
+	prog := tea.NewProgram(model, tea.WithAltScreen())
+	if _, err := prog.Run(); err != nil {
 		log.Fatal(err)
 	}
 }
