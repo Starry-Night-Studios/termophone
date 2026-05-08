@@ -276,17 +276,42 @@ func main() {
 	}
 
 	// ── Lobby client setup ───────────────────────────────────────────────────
+	
+	lobbyStateCh := make(chan string, 2) // Setup channel here before it's used
+	
 	var lobbyClient *vnet.LobbyClient
+	var lobbyMu sync.RWMutex // Protects the client during async setup
+
+	// Defer closing the client when the app shuts down
+	defer func() {
+		lobbyMu.RLock()
+		if lobbyClient != nil {
+			lobbyClient.Close()
+		}
+		lobbyMu.RUnlock()
+	}()
+
 	{
 		localIPs := vnet.GetLocalIPs()
-		lc, err := vnet.NewLobbyClient(cfg.LobbyServer, cfg.Username, localIPs)
-		if err != nil {
-			log.Printf("Lobby unavailable (%v) — running in local-only mode", err)
-		} else {
-			lobbyClient = lc
-			defer lobbyClient.Close()
+		lobbyStateCh <- "connecting"
 
-			lobbyClient.OnClients = func(users []vnet.LobbyUser) {
+		// RUN IN BACKGROUND
+		go func() {
+			lc, err := vnet.NewLobbyClient(cfg.LobbyServer, cfg.Username, localIPs)
+			if err != nil {
+				log.Printf("Lobby unavailable (%v) — running in local-only mode", err)
+				lobbyStateCh <- "failed"
+				return
+			}
+
+			// Safely set the client now that it's connected
+			lobbyMu.Lock()
+			lobbyClient = lc
+			lobbyMu.Unlock()
+			
+			lobbyStateCh <- "connected"
+
+			lc.OnClients = func(users []vnet.LobbyUser) {
 				out := make([]ui.LobbyUser, len(users))
 				for i, u := range users {
 					out[i] = ui.LobbyUser{Username: u.Username, PublicIP: u.PublicIP}
@@ -297,26 +322,28 @@ func main() {
 				}
 			}
 
-			lobbyClient.OnRouting = func(r vnet.RoutingInfo) {
+			lc.OnRouting = func(r vnet.RoutingInfo) {
 				select {
 				case routingCh <- r:
 				default:
-					log.Println("routingCh full — dropped routing info")
 				}
 			}
 
-			lobbyClient.OnIncoming = func(ic vnet.IncomingCall) {
+			lc.OnIncoming = func(ic vnet.IncomingCall) {
 				select {
 				case incomingLobbyCallCh <- ic:
 				default:
-					log.Println("incomingLobbyCallCh full — dropped incoming call")
 				}
 			}
 
-			lobbyClient.OnError = func(err error) {
+			lc.OnError = func(err error) {
 				log.Printf("Lobby connection error: %v", err)
+				lobbyStateCh <- "failed"
+				lobbyMu.Lock()
+				lobbyClient = nil
+				lobbyMu.Unlock()
 			}
-		}
+		}()
 	}
 
 	// ── Incoming lobby call handler ───────────────────────────────────────────
@@ -397,12 +424,16 @@ func main() {
 		}
 
 		// ── Lobby-based dial (username) ───────────────────────────────────────
-		if lobbyClient == nil {
+		lobbyMu.RLock()
+		client := lobbyClient
+		lobbyMu.RUnlock()
+		
+		if client == nil {
 			statusCh <- "Lobby not connected"
 			return fmt.Errorf("lobby unavailable")
 		}
 
-		if err := lobbyClient.Call(id); err != nil {
+		if err := client.Call(id); err != nil {
 			statusCh <- "Call signal failed"
 			return err
 		}
@@ -453,6 +484,7 @@ func main() {
 		LogCh:        logCh,
 		AudioCh:      audioCh,
 		StatsCh:      statsCh,
+		LobbyStateCh: lobbyStateCh,
 		ConnectCh:    connectCh,
 		DisconnCh:    disconnCh,
 		StatusCh:     statusCh,

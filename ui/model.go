@@ -36,6 +36,7 @@ type ModelConfig struct {
 	ConnectCh    <-chan MsgPeerConnected
 	DisconnCh    <-chan MsgPeerDisconnected
 	StatusCh     <-chan string
+	LobbyStateCh <-chan string
 	LobbyUsersCh <-chan MsgLobbyUsers
 	Muted        *atomic.Bool
 	Contacts     []config.Contact
@@ -86,6 +87,9 @@ type Model struct {
 	manualDialMode bool
 	colorScheme    int
 	screenQuality  string
+
+	lobbyState   string
+	lobbyStateCh <-chan string
 
 	logCh     <-chan string
 	audioCh   <-chan MsgAudioLevel
@@ -146,6 +150,8 @@ func NewModel(cfg ModelConfig) Model {
 		usernameInput: ti,
 		peerIDInput:   peerTI,
 		lobbyInput:    lobbyTI,
+		lobbyState:    "connecting",
+		lobbyStateCh:  cfg.LobbyStateCh,
 		colorScheme:   appCfg.ColorScheme,
 		screenQuality: appCfg.ScreenQuality,
 	}
@@ -474,6 +480,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case MsgTick:
 		cmds = append(cmds, tickCmd())
+
+		for _, state := range drain(m.lobbyStateCh) {
+			m.lobbyState = state
+		}
 
 		// mDNS peer updates
 		for _, p := range drain(m.updateCh) {

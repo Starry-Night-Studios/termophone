@@ -181,7 +181,18 @@ func (m Model) renderMainPane() string {
 		b.WriteString("\n      [Esc] cancel   [Enter] save\n      [Left/Right] change theme/quality\n")
 
 	case stateBrowsing:
-		b.WriteString("\n      Not connected.\n")
+		lobbyURL := m.lobbyInput.Value()
+
+		switch m.lobbyState {
+		case "connecting":
+			b.WriteString(fmt.Sprintf("\n      Connecting to lobby : %s...\n", st.Dim.Render(lobbyURL)))
+		case "connected":
+			b.WriteString(fmt.Sprintf("\n      Connected to lobby  : %s\n", st.Info.Render(lobbyURL)))
+		default:
+			b.WriteString(fmt.Sprintf("\n      %s\n", st.Dim.Render("Lobby disconnected (Local only)")))
+		}
+
+		b.WriteString("\n      Not in a call.\n")
 		if m.manualDialMode {
 			b.WriteString("\n      Paste peer ID and press [Enter]:\n\n")
 			b.WriteString("      " + m.peerIDInput.View() + "\n")
@@ -326,15 +337,15 @@ func (m Model) View() string {
 	split := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
 	full := st.Border.Render(split)
 
-	keysStr := "  [up/down] navigate  [Enter] connect  [P] paste id  [S] settings  [R] reload  [X] remove  [Q] quit"
+	keysStr := " [S] settings  [R] reload  [Q] quit"
 	if m.state == stateInCall {
 		keysStr = "  [D] debug  [Q] quit"
 	} else if m.state == stateBrowsing && m.manualDialMode {
-		keysStr = "  [Paste] peer id  [Enter] connect  [Esc] cancel  [Q] quit"
+		keysStr = " [Paste] peer id  [Enter] connect  [Esc] cancel  [Q] quit"
 	}
 	ioStr := "System Default  "
 	if m.h != nil {
-		ioStr = fmt.Sprintf("Peer ID: %s  ", m.h.ID().String())
+		ioStr = fmt.Sprintf("Peer ID: %s ", m.h.ID().String())
 	}
 
 	footerWidth := lipgloss.Width(full)
