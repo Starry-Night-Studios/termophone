@@ -90,9 +90,7 @@ type Model struct {
 
 	settingsCursor int
 	usernameInput  textinput.Model
-	peerIDInput    textinput.Model
 	lobbyInput     textinput.Model
-	manualDialMode bool
 	colorScheme    int
 	screenQuality  string
 
@@ -122,10 +120,6 @@ func NewModel(cfg ModelConfig) Model {
 	ti.Placeholder = "Enter new username..."
 	ti.SetValue(appCfg.Username)
 	ti.CharLimit = 20
-
-	peerTI := textinput.New()
-	peerTI.Placeholder = "Paste peer ID (12D3Koo...)"
-	peerTI.CharLimit = 128
 
 	lobbyTI := textinput.New()
 	lobbyTI.Placeholder = "ws://localhost:8080/ws"
@@ -159,7 +153,6 @@ func NewModel(cfg ModelConfig) Model {
 		removeCb:      cfg.RemoveCb,
 		debug:         false,
 		usernameInput: ti,
-		peerIDInput:   peerTI,
 		lobbyInput:    lobbyTI,
 		colorScheme:   appCfg.ColorScheme,
 		screenQuality: appCfg.ScreenQuality,
@@ -284,33 +277,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ── State-specific key handling ───────────────────────────────
 		switch m.state {
 		case stateBrowsing:
-			if m.manualDialMode {
-				switch msg.String() {
-				case "esc":
-					m.manualDialMode = false
-					m.peerIDInput.Blur()
-					m.peerIDInput.SetValue("")
-				case "enter":
-					peerID := strings.TrimSpace(m.peerIDInput.Value())
-					if peerID != "" {
-						m.statusMsg = "Connecting to pasted peer ID..."
-						if m.dialCb != nil {
-							go m.dialCb(peerID)
-						}
-					} else {
-						m.statusMsg = "Paste a valid peer ID first"
-					}
-					m.manualDialMode = false
-					m.peerIDInput.Blur()
-					m.peerIDInput.SetValue("")
-				default:
-					var cmd tea.Cmd
-					m.peerIDInput, cmd = m.peerIDInput.Update(msg)
-					cmds = append(cmds, cmd)
-				}
-				break
-			}
-
 			switch msg.String() {
 			case "tab":
 				if m.focusedPane == paneSidebar {
@@ -325,11 +291,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.usernameInput.Focus()
 				m.lobbyInput.Blur()
 				skipSettingsInputUpdate = true
-
-			case "p", "P":
-				m.manualDialMode = true
-				m.peerIDInput.Focus()
-				m.peerIDInput.SetValue("")
 
 			case "r", "R":
 				m.peers = nil

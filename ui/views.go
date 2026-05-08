@@ -67,7 +67,6 @@ func rmsToDb(rms float64) string {
 
 // ── UTILITIES ───────────────────────────────────────────────────────────
 
-// cropHeight physically prevents long text from stretching the box downward
 func cropHeight(s string, max int) string {
 	if max <= 0 {
 		return ""
@@ -79,6 +78,7 @@ func cropHeight(s string, max int) string {
 	return s
 }
 
+// ── CUSTOM BORDER DRAWING (With thick borders & bold text) ────────
 func (m Model) wrapWithTitle(content string, title string, width int, height int, focused bool) string {
 	idx := m.colorScheme
 	if idx < 0 || idx >= len(themes) {
@@ -102,7 +102,6 @@ func (m Model) wrapWithTitle(content string, title string, width int, height int
 		targetInnerH = 1
 	}
 
-	// 1. Swapped NormalBorder() to ThickBorder()
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.ThickBorder(), false, true, true, true).
 		BorderForeground(borderColor).
@@ -113,7 +112,6 @@ func (m Model) wrapWithTitle(content string, title string, width int, height int
 	renderedBox := boxStyle.Render(content)
 	actualWidth := lipgloss.Width(renderedBox)
 
-	// 2. Using heavy box-drawing characters for the top line
 	leftStr := "┏━"
 	midStr := title
 	if title != "" {
@@ -123,8 +121,6 @@ func (m Model) wrapWithTitle(content string, title string, width int, height int
 	}
 
 	borderStyle := lipgloss.NewStyle().Foreground(borderColor)
-	
-	// 3. Made the title text permanently Bold
 	titleStyle := lipgloss.NewStyle().Foreground(borderColor).Bold(true)
 
 	left := borderStyle.Render(leftStr)
@@ -135,7 +131,6 @@ func (m Model) wrapWithTitle(content string, title string, width int, height int
 		remLen = 0
 	}
 	
-	// 4. Using heavy characters for the remainder of the top line
 	right := borderStyle.Render(strings.Repeat("━", remLen) + "┓")
 	topBar := left + mid + right
 
@@ -253,7 +248,6 @@ func (m Model) renderMainPane(innerAvailableWidth int) string {
 		qStr := fmt.Sprintf("Quality  : < %s >", qualityLabel)
 		lobbyStr := fmt.Sprintf("Lobby    : %s", m.lobbyInput.View())
 
-		// Ensure settings highlight box doesn't stretch past the window
 		w := innerAvailableWidth
 		if w > 60 {
 			w = 60
@@ -270,11 +264,9 @@ func (m Model) renderMainPane(innerAvailableWidth int) string {
 		b.WriteString("\n      [Esc] cancel   [Enter] save\n      [Left/Right] change theme/quality\n")
 
 	case stateBrowsing:
-		// Responsive ASCII Art
 		if innerAvailableWidth >= 65 {
 			b.WriteString("\n" + st.Title.Render(termophoneASCII) + "\n\n")
 		} else {
-			// Fallback text logo for small terminal windows
 			b.WriteString("\n" + st.Title.Render("  TERMOPHONE") + "\n\n")
 		}
 
@@ -288,13 +280,7 @@ func (m Model) renderMainPane(innerAvailableWidth int) string {
 			b.WriteString(fmt.Sprintf("      %s\n", st.Dim.Render("Lobby disconnected (Local only)")))
 		}
 
-		if m.manualDialMode {
-			b.WriteString("\n      Paste peer ID and press [Enter]:\n\n")
-			b.WriteString("      " + m.peerIDInput.View() + "\n")
-			b.WriteString(st.Dim.Render("\n      [Enter] connect   [Esc] cancel\n"))
-		} else {
-			b.WriteString("\n      Select a peer and press [Enter] to connect, or [P] to paste ID.\n")
-		}
+		b.WriteString("\n      Select a peer and press [Enter] to connect.\n")
 
 		if m.statusMsg != "" {
 			b.WriteString(fmt.Sprintf("\n      %s\n", st.Info.Render(m.statusMsg)))
@@ -356,14 +342,16 @@ func (m Model) renderLogs(maxLines int, maxWidth int) string {
 	if len(m.logs) > maxLines {
 		start = len(m.logs) - maxLines
 	}
-	contentWidth := maxWidth - 3 // accommodate " > "
+	contentWidth := maxWidth - 3 
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
 	prefixStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#D0B000")).Bold(true)
 	lineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#9AA4B2"))
+	
 	for i := start; i < len(m.logs); i++ {
-		line := m.logs[i]
+		line := strings.ReplaceAll(m.logs[i], "\n", "") 
+		
 		runes := []rune(line)
 		if len(runes) > contentWidth {
 			line = string(runes[:contentWidth])
@@ -380,14 +368,13 @@ func (m Model) renderLogs(maxLines int, maxWidth int) string {
 func (m Model) View() string {
 	st := m.getStyles()
 
-	// ── Window Sizing Math ───────────────────────────────────────────────
 	sidebarWidth := 34
-
-	mainWidth := m.WindowWidth - sidebarWidth - 2 // -2 creates the visual gap
+	
+	mainWidth := m.WindowWidth - sidebarWidth - 3 
 	if mainWidth < 40 {
 		mainWidth = 40
 	}
-	mainInnerWidth := mainWidth - 4 // minus padding/borders
+	mainInnerWidth := mainWidth - 4
 
 	contentHeight := m.WindowHeight - 4
 	if contentHeight < 15 {
@@ -398,7 +385,6 @@ func (m Model) View() string {
 	topHeight := contentHeight / 2
 	bottomHeight := contentHeight - topHeight
 
-	// ── Build the Left Panes ────────────────────────────────────────────
 	var leftPane string
 	if m.state == stateInCall {
 		info := fmt.Sprintf("\n  %s\n", st.Info.Render(m.peerName))
@@ -409,13 +395,12 @@ func (m Model) View() string {
 		isOnlineActive := false
 
 		if m.focusedPane == paneSidebar {
-			// If both lists are empty, default to highlighting Contacts
 			if len(m.contacts) == 0 && m.totalItems() == 0 {
 				isContactsActive = true 
 			} else if m.cursor < len(m.contacts) {
-				isContactsActive = true // Cursor is in the top list
+				isContactsActive = true 
 			} else {
-				isOnlineActive = true   // Cursor moved down to the bottom list
+				isOnlineActive = true   
 			}
 		}
 
@@ -424,29 +409,27 @@ func (m Model) View() string {
 		leftPane = lipgloss.JoinVertical(lipgloss.Top, contactsPane, onlinePane)
 	}
 
-	// ── Build the Main Pane ─────────────────────────────────────────────
 	nowStr := time.Now().Format("02 Jan 2006")
 	headerText := fmt.Sprintf("%s   %s", config.Get().Username, nowStr)
-
+	
 	mainContentRaw := m.renderMainPane(mainInnerWidth)
 
 	var rightPaneContent string
 	if m.debug {
 		mainContentHeight := lipgloss.Height(mainContentRaw)
-		maxLogLines := innerAvailableHeight - mainContentHeight - 1 // 1 for divider
-
+		maxLogLines := innerAvailableHeight - mainContentHeight - 1
+		
 		if maxLogLines > 0 {
-			divider := st.Dim.Render(strings.Repeat("─", mainInnerWidth-2))
+			divider := st.Dim.Render(strings.Repeat("━", mainInnerWidth-2)) 
 			logsContent := m.renderLogs(maxLogLines, mainInnerWidth)
-
+			
 			logsBlock := divider
 			if logsContent != "" {
 				logsBlock += "\n" + logsContent
 			}
 			rightPaneContent = lipgloss.JoinVertical(lipgloss.Top, mainContentRaw, logsBlock)
 		} else {
-			// Window too short to show debug logs without breaking UI
-			rightPaneContent = mainContentRaw
+			rightPaneContent = mainContentRaw 
 		}
 	} else {
 		rightPaneContent = mainContentRaw
@@ -455,18 +438,13 @@ func (m Model) View() string {
 	mainTitle := fmt.Sprintf("Main [ %s ]", headerText)
 	rightPane := m.wrapWithTitle(rightPaneContent, mainTitle, mainWidth, contentHeight, m.focusedPane == paneMain)
 
-	// ── Join Everything (with a clean 2-space gap) ──────────────────────
 	split := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, "  ", rightPane)
 
-	// Update keysStr with [Tab] hint
-	keysStr := "  [Tab] focus  [↑↓] select  [Enter] connect  [P] paste  [S] settings  [Q] quit"
+	keysStr := "  [Tab] focus  [↑↓] select  [Enter] connect  [S] settings  [Q] quit"
 	if m.state == stateInCall {
 		keysStr = "  [M] mute  [V] video  [D] debug  [Q] quit"
-	} else if m.state == stateBrowsing && m.manualDialMode {
-		keysStr = "  [Paste] peer id  [Enter] connect  [Esc] cancel  [Q] quit"
 	}
 
-	// Shortened the Peer ID to 8 chars to prevent terminal width wrapping
 	ioStr := "System Default  "
 	if m.h != nil {
 		peerID := m.h.ID().String()
@@ -476,7 +454,7 @@ func (m Model) View() string {
 		ioStr = fmt.Sprintf("Peer ID: %s  ", peerID)
 	}
 
-	footerWidth := m.WindowWidth - 1 // Leave 1 char margin
+	footerWidth := m.WindowWidth - 1 
 	footerStyle := st.Info.Copy().Bold(true)
 	keysRendered := footerStyle.Render(keysStr)
 	ioRendered := footerStyle.Render(ioStr)
