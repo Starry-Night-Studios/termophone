@@ -168,7 +168,7 @@ func (m Model) renderMainPane() string {
 		qStr := fmt.Sprintf("Quality  : < %s >", qualityLabel)
 		lobbyStr := fmt.Sprintf("Lobby    : %s", m.lobbyInput.View())
 
-		settingsSelected := st.Selected.Copy().Width(40).PaddingLeft(6)
+		settingsSelected := st.Selected.Copy().Width(60).PaddingLeft(6)
 
 		for i, row := range []string{usrStr, colStr, qStr, lobbyStr} {
 			if m.settingsCursor == i {
