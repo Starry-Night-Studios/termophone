@@ -17,7 +17,7 @@ const termophoneASCII = `
   / / / _ \/ ___/ __ \__ \/ __ \/ __ \/ __ \/ __ \/ __ \/ _ \
  / / /  __/ /  / / / / / / /_/ / /_/ / / / / /_/ / / / /  __/
 /_/  \___/_/  /_/ /_/ /_/\____/ .___/_/ /_/\____/_/ /_/\___/ 
-                             /_/                             `
+                             /_/                by kurobyte19  `
 
 type Styles struct {
 	Border   lipgloss.Style
@@ -130,7 +130,7 @@ func (m Model) wrapWithTitle(content string, title string, width int, height int
 	if remLen < 0 {
 		remLen = 0
 	}
-	
+
 	right := borderStyle.Render(strings.Repeat("━", remLen) + "┓")
 	topBar := left + mid + right
 
@@ -342,16 +342,16 @@ func (m Model) renderLogs(maxLines int, maxWidth int) string {
 	if len(m.logs) > maxLines {
 		start = len(m.logs) - maxLines
 	}
-	contentWidth := maxWidth - 3 
+	contentWidth := maxWidth - 3
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
 	prefixStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#D0B000")).Bold(true)
 	lineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#9AA4B2"))
-	
+
 	for i := start; i < len(m.logs); i++ {
-		line := strings.ReplaceAll(m.logs[i], "\n", "") 
-		
+		line := strings.ReplaceAll(m.logs[i], "\n", "")
+
 		runes := []rune(line)
 		if len(runes) > contentWidth {
 			line = string(runes[:contentWidth])
@@ -369,14 +369,14 @@ func (m Model) View() string {
 	st := m.getStyles()
 
 	sidebarWidth := 34
-	
-	mainWidth := m.WindowWidth - sidebarWidth - 3 
+
+	mainWidth := m.WindowWidth - sidebarWidth - 2 // -2 accounts for the "  " gap between panes
 	if mainWidth < 40 {
 		mainWidth = 40
 	}
 	mainInnerWidth := mainWidth - 4
 
-	contentHeight := m.WindowHeight - 4
+	contentHeight := m.WindowHeight - 3
 	if contentHeight < 15 {
 		contentHeight = 15
 	}
@@ -401,25 +401,25 @@ func (m Model) View() string {
 
 	nowStr := time.Now().Format("02 Jan 2006")
 	headerText := fmt.Sprintf("%s   %s", config.Get().Username, nowStr)
-	
+
 	mainContentRaw := m.renderMainPane(mainInnerWidth)
 
 	var rightPaneContent string
 	if m.debug {
 		mainContentHeight := lipgloss.Height(mainContentRaw)
 		maxLogLines := innerAvailableHeight - mainContentHeight - 1
-		
+
 		if maxLogLines > 0 {
-			divider := st.Dim.Render(strings.Repeat("━", mainInnerWidth-2)) 
+			divider := st.Dim.Render(strings.Repeat("━", mainInnerWidth-2))
 			logsContent := m.renderLogs(maxLogLines, mainInnerWidth)
-			
+
 			logsBlock := divider
 			if logsContent != "" {
 				logsBlock += "\n" + logsContent
 			}
 			rightPaneContent = lipgloss.JoinVertical(lipgloss.Top, mainContentRaw, logsBlock)
 		} else {
-			rightPaneContent = mainContentRaw 
+			rightPaneContent = mainContentRaw
 		}
 	} else {
 		rightPaneContent = mainContentRaw
@@ -430,9 +430,9 @@ func (m Model) View() string {
 
 	split := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, "  ", rightPane)
 
-	keysStr := "  [Tab] cycle panes  [↑↓] select  [Enter] connect  [S] settings  [Q] quit"
+	keysStr := " [Tab] cycle panes  [↑↓] select  [Enter] connect  [S] settings  [Q] quit"
 	if m.state == stateInCall {
-		keysStr = "  [M] mute  [V] video  [D] debug  [Q] quit"
+		keysStr = " [M] mute  [V] video  [D] debug  [Q] quit"
 	}
 
 	ioStr := "System Default  "
@@ -441,10 +441,10 @@ func (m Model) View() string {
 		if len(peerID) > 8 {
 			peerID = peerID[len(peerID)-8:]
 		}
-		ioStr = fmt.Sprintf("Peer ID: %s  ", peerID)
+		ioStr = fmt.Sprintf("Peer ID: %s   ", peerID)
 	}
 
-	footerWidth := m.WindowWidth - 1 
+	footerWidth := m.WindowWidth - 1
 	footerStyle := st.Info.Copy().Bold(true)
 	keysRendered := footerStyle.Render(keysStr)
 	ioRendered := footerStyle.Render(ioStr)

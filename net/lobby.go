@@ -26,21 +26,21 @@ type LobbyUser struct {
 }
 
 type RoutingInfo struct {
-	TargetUsername string
-	RouteType      string
-	TargetIPs      []string
-	TargetPublic   string
-	RelayAddress   string
-	SessionID      string
+	TargetUsername string   `json:"target_username"`
+	RouteType      string   `json:"route_type"`
+	TargetIPs      []string `json:"target_ips"`
+	TargetPublic   string   `json:"target_public"`
+	RelayAddress   string   `json:"relay_address"`
+	SessionID      string   `json:"session_id"`
 }
 
 type IncomingCall struct {
-	CallerUsername string
-	RouteType      string
-	CallerIPs      []string
-	CallerPublic   string
-	RelayAddress   string
-	SessionID      string
+	CallerUsername string   `json:"caller_username"`
+	RouteType      string   `json:"route_type"`
+	CallerIPs      []string `json:"caller_ips"`
+	CallerPublic   string   `json:"caller_public"`
+	RelayAddress   string   `json:"relay_address"`
+	SessionID      string   `json:"session_id"`
 }
 
 type lobbyMsg struct {
