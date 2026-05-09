@@ -276,13 +276,12 @@ func main() {
 	}
 
 	// ── Lobby client setup ───────────────────────────────────────────────────
-	
-	lobbyStateCh := make(chan string, 2) // Setup channel here before it's used
-	
-	var lobbyClient *vnet.LobbyClient
-	var lobbyMu sync.RWMutex // Protects the client during async setup
 
-	// Defer closing the client when the app shuts down
+	lobbyStateCh := make(chan string, 2)
+
+	var lobbyClient *vnet.LobbyClient
+	var lobbyMu sync.RWMutex
+
 	defer func() {
 		lobbyMu.RLock()
 		if lobbyClient != nil {
@@ -291,24 +290,29 @@ func main() {
 		lobbyMu.RUnlock()
 	}()
 
-	{
+	connectLobby := func(url string) {
+		lobbyMu.Lock()
+		if lobbyClient != nil {
+			lobbyClient.Close()
+			lobbyClient = nil
+		}
+		lobbyMu.Unlock()
+
 		localIPs := vnet.GetLocalIPs()
 		lobbyStateCh <- "connecting"
 
-		// RUN IN BACKGROUND
 		go func() {
-			lc, err := vnet.NewLobbyClient(cfg.LobbyServer, cfg.Username, localIPs)
+			lc, err := vnet.NewLobbyClient(url, cfg.Username, localIPs)
 			if err != nil {
 				log.Printf("Lobby unavailable (%v) — running in local-only mode", err)
 				lobbyStateCh <- "failed"
 				return
 			}
 
-			// Safely set the client now that it's connected
 			lobbyMu.Lock()
 			lobbyClient = lc
 			lobbyMu.Unlock()
-			
+
 			lobbyStateCh <- "connected"
 
 			lc.OnClients = func(users []vnet.LobbyUser) {
@@ -346,12 +350,23 @@ func main() {
 		}()
 	}
 
+	disconnectLobby := func() {
+		lobbyMu.Lock()
+		if lobbyClient != nil {
+			lobbyClient.Close()
+			lobbyClient = nil
+		}
+		lobbyMu.Unlock()
+		lobbyStateCh <- "disconnected"
+		select {
+		case lobbyUsersCh <- ui.MsgLobbyUsers{Users: []ui.LobbyUser{}}:
+		default:
+		}
+	}
+
+	connectLobby(cfg.LobbyServer)
+
 	// ── Incoming lobby call handler ───────────────────────────────────────────
-	//
-	// Relay calls: we proactively connect to the relay with the session ID so
-	// both sides meet in the middle.
-	// LAN calls: the caller dials us via libp2p; incomingStreamCh handles that
-	// naturally through the existing accept flow.
 	go func() {
 		for {
 			select {
@@ -376,14 +391,9 @@ func main() {
 	}()
 
 	// ── dialCb ───────────────────────────────────────────────────────────────
-	//
-	// id is either:
-	//   • A libp2p peer ID (starts with "12D3" or "Qm") → direct libp2p dial
-	//   • A lobby username → signal via lobby, then connect via relay or LAN
 	dialCb := func(id string) error {
 		log.Printf("Dialing %s...", id)
 
-		// ── libp2p direct dial (mDNS / saved contact) ────────────────────────
 		if strings.HasPrefix(id, "12D3") || strings.HasPrefix(id, "Qm") {
 			pid, err := peer.Decode(id)
 			if err != nil {
@@ -407,7 +417,6 @@ func main() {
 				return err
 			}
 
-			// Wait for remote to accept or decline.
 			buf := make([]byte, 1)
 			stream.SetReadDeadline(time.Now().Add(30 * time.Second))
 			n, err := stream.Read(buf)
@@ -423,11 +432,10 @@ func main() {
 			return nil
 		}
 
-		// ── Lobby-based dial (username) ───────────────────────────────────────
 		lobbyMu.RLock()
 		client := lobbyClient
 		lobbyMu.RUnlock()
-		
+
 		if client == nil {
 			statusCh <- "Lobby not connected"
 			return fmt.Errorf("lobby unavailable")
@@ -438,7 +446,6 @@ func main() {
 			return err
 		}
 
-		// Block until the lobby sends routing info or we time out.
 		select {
 		case routing := <-routingCh:
 			log.Printf("Routing received: type=%s session=%s", routing.RouteType, routing.SessionID)
@@ -478,23 +485,25 @@ func main() {
 
 	// ── Build and run the UI ──────────────────────────────────────────────────
 	model := ui.NewModel(ui.ModelConfig{
-		Host:         h,
-		PeerCh:       peerCh,
-		StreamCh:     incomingStreamCh,
-		LogCh:        logCh,
-		AudioCh:      audioCh,
-		StatsCh:      statsCh,
-		LobbyStateCh: lobbyStateCh,
-		ConnectCh:    connectCh,
-		DisconnCh:    disconnCh,
-		StatusCh:     statusCh,
-		LobbyUsersCh: lobbyUsersCh,
-		Muted:        muted,
-		Contacts:     cfg.Contacts,
-		DialCb:       dialCb,
-		AcceptCb:     acceptCb,
-		SaveCb:       saveContactCb,
-		RemoveCb:     removeContactCb,
+		Host:              h,
+		PeerCh:            peerCh,
+		StreamCh:          incomingStreamCh,
+		LogCh:             logCh,
+		AudioCh:           audioCh,
+		StatsCh:           statsCh,
+		LobbyStateCh:      lobbyStateCh,
+		ConnectCh:         connectCh,
+		DisconnCh:         disconnCh,
+		StatusCh:          statusCh,
+		LobbyUsersCh:      lobbyUsersCh,
+		ConnectLobbyCb:    connectLobby,
+		DisconnectLobbyCb: disconnectLobby,
+		Muted:             muted,
+		Contacts:          cfg.Contacts,
+		DialCb:            dialCb,
+		AcceptCb:          acceptCb,
+		SaveCb:            saveContactCb,
+		RemoveCb:          removeContactCb,
 	})
 
 	prog := tea.NewProgram(model, tea.WithAltScreen())

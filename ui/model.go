@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"os/exec"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -35,23 +36,25 @@ const (
 )
 
 type ModelConfig struct {
-	Host         host.Host
-	PeerCh       <-chan peer.AddrInfo
-	StreamCh     <-chan network.Stream
-	LogCh        <-chan string
-	AudioCh      <-chan MsgAudioLevel
-	StatsCh      <-chan MsgStats
-	ConnectCh    <-chan MsgPeerConnected
-	DisconnCh    <-chan MsgPeerDisconnected
-	StatusCh     <-chan string
-	LobbyStateCh <-chan string
-	LobbyUsersCh <-chan MsgLobbyUsers
-	Muted        *atomic.Bool
-	Contacts     []config.Contact
-	DialCb       func(string) error
-	AcceptCb     func(network.Stream) error
-	SaveCb       func(config.Contact)
-	RemoveCb     func(string)
+	Host              host.Host
+	PeerCh            <-chan peer.AddrInfo
+	StreamCh          <-chan network.Stream
+	LogCh             <-chan string
+	AudioCh           <-chan MsgAudioLevel
+	StatsCh           <-chan MsgStats
+	ConnectCh         <-chan MsgPeerConnected
+	DisconnCh         <-chan MsgPeerDisconnected
+	StatusCh          <-chan string
+	LobbyStateCh      <-chan string
+	LobbyUsersCh      <-chan MsgLobbyUsers
+	Muted             *atomic.Bool
+	Contacts          []config.Contact
+	DialCb            func(string) error
+	AcceptCb          func(network.Stream) error
+	SaveCb            func(config.Contact)
+	RemoveCb          func(string)
+	ConnectLobbyCb    func(string)
+	DisconnectLobbyCb func()
 }
 
 type Model struct {
@@ -110,6 +113,9 @@ type Model struct {
 	saveCb   func(config.Contact)
 	removeCb func(string)
 
+	connectLobbyCb    func(string)
+	disconnectLobbyCb func()
+
 	WindowWidth  int
 	WindowHeight int
 }
@@ -128,35 +134,37 @@ func NewModel(cfg ModelConfig) Model {
 	lobbyTI.SetValue(appCfg.LobbyServer)
 
 	return Model{
-		state:         stateBrowsing,
-		focusedPane:   paneContacts,
-		h:             cfg.Host,
-		peers:         make([]peer.AddrInfo, 0),
-		newPeers:      make([]peer.AddrInfo, 0),
-		lobbyUsers:    make([]LobbyUser, 0),
-		contacts:      cfg.Contacts,
-		updateCh:      cfg.PeerCh,
-		streamCh:      cfg.StreamCh,
-		lobbyUsersCh:  cfg.LobbyUsersCh,
-		logCh:         cfg.LogCh,
-		audioCh:       cfg.AudioCh,
-		statsCh:       cfg.StatsCh,
-		connectCh:     cfg.ConnectCh,
-		disconnCh:     cfg.DisconnCh,
-		statusCh:      cfg.StatusCh,
-		lobbyState:    "connecting",
-		lobbyStateCh:  cfg.LobbyStateCh,
-		muted:         cfg.Muted,
-		logs:          make([]string, 0),
-		dialCb:        cfg.DialCb,
-		acceptCb:      cfg.AcceptCb,
-		saveCb:        cfg.SaveCb,
-		removeCb:      cfg.RemoveCb,
-		debug:         false,
-		usernameInput: ti,
-		lobbyInput:    lobbyTI,
-		colorScheme:   appCfg.ColorScheme,
-		screenQuality: appCfg.ScreenQuality,
+		state:             stateBrowsing,
+		focusedPane:       paneContacts,
+		h:                 cfg.Host,
+		peers:             make([]peer.AddrInfo, 0),
+		newPeers:          make([]peer.AddrInfo, 0),
+		lobbyUsers:        make([]LobbyUser, 0),
+		contacts:          cfg.Contacts,
+		updateCh:          cfg.PeerCh,
+		streamCh:          cfg.StreamCh,
+		lobbyUsersCh:      cfg.LobbyUsersCh,
+		logCh:             cfg.LogCh,
+		audioCh:           cfg.AudioCh,
+		statsCh:           cfg.StatsCh,
+		connectCh:         cfg.ConnectCh,
+		disconnCh:         cfg.DisconnCh,
+		statusCh:          cfg.StatusCh,
+		lobbyState:        "connecting",
+		lobbyStateCh:      cfg.LobbyStateCh,
+		muted:             cfg.Muted,
+		logs:              make([]string, 0),
+		dialCb:            cfg.DialCb,
+		acceptCb:          cfg.AcceptCb,
+		saveCb:            cfg.SaveCb,
+		removeCb:          cfg.RemoveCb,
+		connectLobbyCb:    cfg.ConnectLobbyCb,
+		disconnectLobbyCb: cfg.DisconnectLobbyCb,
+		debug:             false,
+		usernameInput:     ti,
+		lobbyInput:        lobbyTI,
+		colorScheme:       appCfg.ColorScheme,
+		screenQuality:     appCfg.ScreenQuality,
 	}
 }
 
@@ -218,14 +226,15 @@ func (m *Model) updateNewPeers() {
 }
 
 func (m *Model) clampCursor() {
-	if m.focusedPane == paneContacts {
+	switch m.focusedPane {
+	case paneContacts:
 		if m.cursor >= len(m.contacts) {
 			m.cursor = len(m.contacts) - 1
 		}
 		if m.cursor < 0 {
 			m.cursor = 0
 		}
-	} else if m.focusedPane == paneOnline {
+	case paneOnline:
 		total := m.totalItems()
 		if m.cursor >= total {
 			m.cursor = total - 1
@@ -272,6 +281,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.sharingScreen = false
 				} else {
+					if _, err := exec.LookPath("ffmpeg"); err != nil {
+						m.logs = append(m.logs, "Error: ffmpeg is not installed")
+						return m, nil
+					}
+					if _, err := exec.LookPath("mpv"); err != nil {
+						m.logs = append(m.logs, "Error: mpv is not installed")
+						return m, nil
+					}
 					targetID, _ := peer.Decode(m.peerID)
 					ctx, cancel := context.WithCancel(context.Background())
 					m.cancelScreen = cancel
@@ -310,6 +327,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.newPeers = nil
 				m.updateNewPeers()
 				m.statusMsg = "Peer list cleared (waiting for discovery...)"
+
+			case "c", "C":
+				if m.connectLobbyCb != nil {
+					m.connectLobbyCb(m.lobbyInput.Value())
+				}
+
+			case "l", "L":
+				if m.disconnectLobbyCb != nil {
+					m.disconnectLobbyCb()
+				}
 
 			case "up", "k":
 				if m.focusedPane == paneContacts && m.cursor > 0 {
@@ -445,15 +472,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.settingsCursor++
 				}
 			case "left":
-				if m.settingsCursor == 1 {
+				switch m.settingsCursor {
+				case 1:
 					m.colorScheme = (m.colorScheme - 1 + len(themes)) % len(themes)
-				} else if m.settingsCursor == 2 {
+				case 2:
 					m.screenQuality = previousQuality(m.screenQuality)
 				}
 			case "right":
-				if m.settingsCursor == 1 {
+				switch m.settingsCursor {
+				case 1:
 					m.colorScheme = (m.colorScheme + 1) % len(themes)
-				} else if m.settingsCursor == 2 {
+				case 2:
 					m.screenQuality = nextQuality(m.screenQuality)
 				}
 			case "enter":
@@ -467,13 +496,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			if m.state == stateSettings {
-				if m.settingsCursor == 0 {
+				switch m.settingsCursor {
+				case 0:
 					m.usernameInput.Focus()
 					m.lobbyInput.Blur()
-				} else if m.settingsCursor == 3 {
+				case 3:
 					m.lobbyInput.Focus()
 					m.usernameInput.Blur()
-				} else {
+				default:
 					m.usernameInput.Blur()
 					m.lobbyInput.Blur()
 				}

@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"math"
 	"strings"
 	"termophone/config"
 	"time"
@@ -12,12 +11,12 @@ import (
 
 // ── ASCII Logo ──────────────────────────────────────────────────────────
 const termophoneASCII = `
-  ______                                __                   
- /_  __/__  _________ ___  ____  ____  / /_  ____  ____  ___ 
-  / / / _ \/ ___/ __ \__ \/ __ \/ __ \/ __ \/ __ \/ __ \/ _ \
- / / /  __/ /  / / / / / / /_/ / /_/ / / / / /_/ / / / /  __/
-/_/  \___/_/  /_/ /_/ /_/\____/ .___/_/ /_/\____/_/ /_/\___/ 
-                             /_/                by kurobyte19  `
+  ______                                __                     __
+ /_  __/__  _________ ___  ____  ____  / /_  ____  ____  ___  / /
+  / / / _ \/ ___/ __ \__ \/ __ \/ __ \/ __ \/ __ \/ __ \/ _ \/ /
+ / / /  __/ /  / / / / / / /_/ / /_/ / / / / /_/ / / / /  __/_/
+/_/  \___/_/  /_/ /_/ /_/\____/ .___/_/ /_/\____/_/ /_/\___(_) 
+                             /_/                   `
 
 type Styles struct {
 	Border   lipgloss.Style
@@ -55,14 +54,6 @@ func (m Model) getStyles() Styles {
 		Dim:      lipgloss.NewStyle().Foreground(th.Dim),
 		Selected: lipgloss.NewStyle().Background(th.Bg2).Foreground(th.Hi).Bold(true).Width(26),
 	}
-}
-
-func rmsToDb(rms float64) string {
-	if rms <= 0 {
-		return "-inf dB"
-	}
-	db := 20 * math.Log10(rms)
-	return fmt.Sprintf("%-6.0fdB", db)
 }
 
 // ── UTILITIES ───────────────────────────────────────────────────────────
@@ -280,6 +271,7 @@ func (m Model) renderMainPane(innerAvailableWidth int) string {
 			b.WriteString(fmt.Sprintf("      %s\n", st.Dim.Render("Lobby disconnected (Local only)")))
 		}
 
+		b.WriteString(st.Dim.Render("\n      [C] Connect/Retry Lobby  [L] Disconnect Lobby (LAN Only)") + "\n")
 		b.WriteString("\n      Select a peer and press [Enter] to connect.\n")
 
 		if m.statusMsg != "" {
@@ -322,12 +314,6 @@ func (m Model) renderMainPane(innerAvailableWidth int) string {
 		b.WriteString(fmt.Sprintf("      Video    : %s (%s)\n", videoStatus, qualityLabel))
 		b.WriteString("      Codec    : Opus (48kHz)\n\n")
 		b.WriteString(st.Dim.Render("      Controls : [M] mute/unmute   [V] screen share") + "\n\n")
-
-		b.WriteString(st.Title.Render(" STATS ") + "\n")
-		b.WriteString(fmt.Sprintf("      Local Peak : %s\n", st.Info.Render(rmsToDb(m.localRMS))))
-		b.WriteString(fmt.Sprintf("      Peer Peak  : %s\n", st.Info.Render(rmsToDb(m.peerRMS))))
-		b.WriteString(fmt.Sprintf("      Loss       : %s\n", st.Info.Render(fmt.Sprintf("%.1f%%", m.loss))))
-		b.WriteString(fmt.Sprintf("      Latency    : %s\n", st.Info.Render(fmt.Sprintf("%dms", m.latencyMs))))
 	}
 
 	return b.String()
