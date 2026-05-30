@@ -1,6 +1,6 @@
 # Termophone
 
-Peer-to-peer voice calls in the terminal.
+Peer-to-peer voice calls in the terminal!
 
 ![Termophone](https://github.com/zendex19/U1907-site-images/blob/main/projects/screenshot.png?raw=true)
 
